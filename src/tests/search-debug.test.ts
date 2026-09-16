@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { SearchDiagnosticObserver,buildSearchDebug } from '../application/search-debug-diagnostics.js';
+import { JourneySearchService } from '../application/journey-search-service.js';
+import { searchModeConfig } from '../application/search-mode.js';
+import { connectionDiagnostics } from '../journey/connection/types.js';
+import { multiDiagnostics } from '../domain/planner/types.js';
+import { apiConfig } from '../config/api.js';
+import type { RailwayProvider } from '../providers/railway-provider.js';
+import type { AvailabilityResult } from '../domain/types/availability.js';
+const request={trainNumber:'12345',fromStationCode:'A',toStationCode:'D',journeyDate:'20-09-2099',travelClass:'3A' as const,quota:'GN' as const};
+const input={from:'A',to:'D',date:request.journeyDate};
+const empty:RailwayProvider={async searchTrainsBetweenStations(){return {provider:'fake',providerState:'SUCCESS',trains:[]};},async getTrainInfo(){throw new Error('offline');},async getAvailability(r){return {provider:'railkit',providerState:'SUCCESS',request:r,days:[{date:r.journeyDate,state:'WAITLIST'}]};}};
+function debug(patch={},used={availability:0,discovery:0,trainInfo:0}){return buildSearchDebug({results:[],diagnostics:{...connectionDiagnostics(),...patch}},new SearchDiagnosticObserver(),searchModeConfig('DEEP'),0,used);}
+test('no trains discovered reason with real offline service',async()=>{const r=await new JourneySearchService(empty,{logger:()=>{},exposeSearchDiagnostics:true}).search(input);assert.equal(r.meta.debugDiagnostics?.primaryFailureReason,'NO_TRAINS_DISCOVERED');});
+test('diagnostics disabled preserves absence of public section',async()=>{const r=await new JourneySearchService(empty,{logger:()=>{}}).search(input);assert.ok(!('debugDiagnostics' in r.meta));});
+test('all WAITLIST actual checks counted without calling them options',async()=>{
+ const r=await new JourneySearchService(empty,{logger:()=>{},exposeSearchDiagnostics:true,engineFactory:p=>({async search(){for(let i=0;i<3;i++)await p.getAvailability(request);return {results:[],diagnostics:{...connectionDiagnostics(),directAvailabilityChecks:3}};}})}).search(input);
+ assert.equal(r.meta.debugDiagnostics?.availabilityOutcomes.waitlist,3);assert.equal(r.meta.apiUsage?.callsByType.availability,3);assert.ok(r.meta.debugDiagnostics?.failureReasons.includes('NO_USABLE_DIRECT_INVENTORY'));
+});
+test('timing rejected all pairs classifies no feasible connection',()=>{assert.ok(debug({trainPairsGenerated:5,trainPairsRejectedByTiming:5}).failureReasons.includes('NO_FEASIBLE_CONNECTIONS'));});
+for(const [flag,reason] of [['availabilityBudgetExhausted','GLOBAL_AVAILABILITY_BUDGET'],['trainDiscoveryBudgetExhausted','DISCOVERY_BUDGET'],['trainInfoBudgetExhausted','TRAIN_INFO_BUDGET']] as const)test(`${flag} completion reason agrees with partial semantics`,()=>{assert.equal(debug({[flag]:true}).completionReason,reason);assert.ok(debug({[flag]:true}).failureReasons.includes('SEARCH_BUDGET_EXHAUSTED'));});
+test('38 of 40 does not imply hard availability exhaustion',()=>{const d=debug({trainDiscoveryBudgetExhausted:true},{availability:38,discovery:10,trainInfo:1});assert.deepEqual(d.budgets.availability,{limit:40,used:38,remaining:2,exhausted:false});assert.equal(d.completionReason,'DISCOVERY_BUDGET');assert.equal(d.budgets.discovery.exhausted,true);});
+test('near budget with normal completion has no budget failure',()=>{const d=debug({earlyStopReason:'CANDIDATES_EXHAUSTED'},{availability:38,discovery:9,trainInfo:1});assert.equal(d.completionReason,'COMPLETED_NORMAL');assert.ok(!d.failureReasons.includes('SEARCH_BUDGET_EXHAUSTED'));});
+test('normal goal reached at budget boundary keeps completion semantics',()=>assert.equal(debug({earlyStopReason:'MAX_RESULTS_REACHED',availabilityBudgetExhausted:true}).completionReason,'RESULT_TARGET_REACHED'));
+test('multi generated and pruned counters preserved explicitly',()=>{const m={...multiDiagnostics(),multiInterchangeActivated:true,multiInterchangePartialPathsGenerated:31,multiInterchangePathsExpanded:9,multiInterchangeTimingPruned:15,multiInterchangeBeamPruned:10};const r=buildSearchDebug({results:[],diagnostics:connectionDiagnostics(),multi:{candidates:[],diagnostics:m}},new SearchDiagnosticObserver(),searchModeConfig('DEEP'),0,{availability:0,discovery:0,trainInfo:0});assert.equal(r.stages.multiInterchange?.partialPathsGenerated,31);assert.equal(r.stages.multiInterchange?.completedPaths,0);assert.equal(r.stages.multiInterchange?.beamPruned,10);});
+test('each normalized outcome counted once and ambiguous date stays unclassified',()=>{
+ const o=new SearchDiagnosticObserver();for(const state of ['AVAILABLE','RAC','WAITLIST','NOT_AVAILABLE'] as const)o.observeAvailability(request,{provider:'railkit',providerState:'SUCCESS',request,days:[{date:request.journeyDate,state}]});
+ for(const providerState of ['PROVIDER_UNAVAILABLE','PROVIDER_ERROR'] as const)o.observeAvailability(request,{provider:'railkit',providerState,request,days:[]});
+ o.observeAvailability(request,{provider:'railkit',providerState:'SUCCESS',request,days:[]});assert.deepEqual(o.outcomes,{available:1,rac:1,waitlist:1,notAvailable:1,providerUnavailable:1,providerError:1,unclassified:1});
+});
+test('thrown availability failures counted and no stack retained',()=>{const o=new SearchDiagnosticObserver();o.observeAvailabilityError(new Error('secret stack'));o.observeAvailabilityError({providerState:'PROVIDER_UNAVAILABLE',raw:'secret'});assert.equal(o.outcomes.providerError,1);assert.equal(o.outcomes.providerUnavailable,1);assert.ok(!JSON.stringify(o.snapshot()).includes('secret'));});
+test('safe samples capped at ten with accurate unique counts',()=>{
+ const o=new SearchDiagnosticObserver();o.discoveryStarted();o.observeDiscovery(request,{provider:'fake',providerState:'SUCCESS',trains:Array.from({length:20},(_,i)=>({trainNumber:String(10000+i),trainName:'secret',fromStationCode:'A',toStationCode:'D',departureTime:null,arrivalTime:null}))});
+ const d=buildSearchDebug({results:[],diagnostics:{...connectionDiagnostics(),connectionStationCandidates:Array.from({length:20},(_,i)=>({stationCode:String.fromCharCode(66+i),score:i}))}},o,searchModeConfig('DEEP'),0,{availability:0,discovery:1,trainInfo:0});assert.equal(d.observedTrainNumbers.length,10);assert.equal(d.observedInterchangeStations.length,10);assert.equal(d.discovery.uniqueTrainsObserved,20);assert.equal(d.discovery.exactEndpointTrains,20);assert.ok(!JSON.stringify(d).includes('secret'));
+});
+test('raw provider payload never appears in enabled public diagnostics',async()=>{const provider={...empty,async getAvailability(r:typeof request){return {...await empty.getAvailability(r),raw:'PRIVATE_BODY',providerMessage:'PRIVATE_MESSAGE'} as AvailabilityResult;}};const r=await new JourneySearchService(provider,{exposeSearchDiagnostics:true,logger:()=>{},engineFactory:p=>({async search(){await p.getAvailability(request);return {results:[],diagnostics:connectionDiagnostics()};}})}).search(input);assert.ok(r.meta.debugDiagnostics);assert.ok(!JSON.stringify(r).includes('PRIVATE'));});
+test('provider interruption and bounded corridor reasons require evidence',()=>{assert.equal(debug({earlyStopReason:'DIRECT_DISCOVERY_FAILED_NO_CONNECTION_SEEDS'}).completionReason,'PROVIDER_INTERRUPTION');assert.ok(!debug().failureReasons.includes('CORRIDOR_EXHAUSTED'));assert.ok(debug({earlyStopReason:'CANDIDATES_EXHAUSTED'}).failureReasons.includes('CORRIDOR_EXHAUSTED'));});
+test('environment switch defaults false and validates values',()=>{assert.equal(apiConfig({}).exposeSearchDiagnostics,false);assert.equal(apiConfig({EXPOSE_SEARCH_DIAGNOSTICS:'true'}).exposeSearchDiagnostics,true);assert.throws(()=>apiConfig({EXPOSE_SEARCH_DIAGNOSTICS:'yes'}));});
+test('enabling diagnostics does not alter call counts or results',async()=>{const a=await new JourneySearchService(empty,{logger:()=>{}}).search(input);const b=await new JourneySearchService(empty,{logger:()=>{},exposeSearchDiagnostics:true}).search(input);assert.deepEqual(a.results,b.results);assert.deepEqual(a.meta.apiUsage,b.meta.apiUsage);assert.equal(a.meta.searchCompleted,b.meta.searchCompleted);});
+test('cached availability is counted only on the actual provider invocation',async()=>{
+ const {ConnectionProviderSession}=await import('../journey/connection/provider-session.js');const {ConnectionBudget}=await import('../journey/connection/budget.js');
+ const r=await new JourneySearchService(empty,{logger:()=>{},exposeSearchDiagnostics:true,engineFactory:p=>({async search(){const d=connectionDiagnostics();const session=new ConnectionProviderSession(p,new ConnectionBudget(),d,3);await session.availability(request);await session.availability(request);return {results:[],diagnostics:d};}})}).search(input);
+ assert.equal(r.meta.debugDiagnostics?.availabilityOutcomes.waitlist,1);assert.equal(r.meta.apiUsage?.externalCalls,1);assert.equal(r.meta.apiUsage?.cacheHits,1);
+});

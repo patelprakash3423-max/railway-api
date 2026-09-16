@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {searchApiUsage} from '../domain/usage/search-api-usage.js';
+import {configuredProviderQuota} from '../domain/usage/provider-quota.js';
+import {JourneySearchService} from '../application/journey-search-service.js';
+import {connectionDiagnostics} from '../journey/connection/types.js';
+import type {RailwayProvider} from '../providers/railway-provider.js';
+const calls={discovery:6,trainInfo:4,availability:16};
+for(const [field,value] of [['discovery',6],['trainInfo',4],['availability',16]] as const)test(`usage ${field} preserves actual counter`,()=>assert.equal(searchApiUsage(calls,12,30,'STANDARD').callsByType[field],value));
+test('external sum excludes cache hits',()=>assert.equal(searchApiUsage(calls,999,30,'STANDARD').externalCalls,26));
+test('remaining and rounded percentage correct',()=>assert.deepEqual(searchApiUsage(calls,12,30,'STANDARD').budgets,{availabilityLimit:30,availabilityUsed:16,availabilityRemaining:14,percentUsed:53}));
+test('zero calls and zero limit safe',()=>assert.equal(searchApiUsage({discovery:0,trainInfo:0,availability:0},0,0,'QUICK').budgets.percentUsed,0));
+test('percent and remaining bounded without hiding actual usage',()=>{const b=searchApiUsage(calls,0,10,'STANDARD').budgets;assert.equal(b.percentUsed,100);assert.equal(b.availabilityRemaining,0);assert.equal(b.availabilityUsed,16);});
+test('configured plan has no fabricated used/remaining values',()=>{const p=configuredProviderQuota({RAILKIT_MONTHLY_REQUEST_LIMIT:'10000',RAILKIT_BURST_REQUEST_LIMIT:'600',RAILKIT_BURST_WINDOW_MINUTES:'10'});assert.deepEqual(p,{source:'CONFIGURED_LIMIT',monthlyLimit:10000,burstLimit:600,burstWindowMinutes:10});assert.equal(p?.monthlyRemaining,undefined);assert.equal(p?.monthlyUsed,undefined);});
+test('missing plan safe and invalid limits reject',()=>{assert.equal(configuredProviderQuota({}),undefined);for(const v of ['-1','0','NaN','2.5'])assert.throws(()=>configuredProviderQuota({RAILKIT_MONTHLY_REQUEST_LIMIT:v}));});
+test('public usage counts real wrapper calls despite synthetic diagnostics and redacts secrets',async()=>{
+ const provider:RailwayProvider={async searchTrainsBetweenStations(){return {provider:'fake',providerState:'SUCCESS',trains:[]};},async getTrainInfo(){throw new Error('fake');},async getAvailability(r){return {provider:'railkit',providerState:'SUCCESS',request:r,days:[]};}};
+ const logs:Record<string,unknown>[]=[];
+ const s=new JourneySearchService(provider,{logger:r=>logs.push(r),engineFactory:p=>({async search(){await p.searchTrainsBetweenStations({fromStationCode:'A',toStationCode:'D',journeyDate:'20-09-2099'});try{await p.getTrainInfo('10000');}catch{}await p.getAvailability({trainNumber:'10000',fromStationCode:'A',toStationCode:'D',journeyDate:'20-09-2099',travelClass:'3A',quota:'GN'});return {results:[],diagnostics:{...connectionDiagnostics(),availabilityCacheHits:5}};}})});
+ const result=await s.search({from:'A',to:'D',date:'20-09-2099'});assert.equal(result.meta.apiUsage?.externalCalls,3);assert.deepEqual(result.meta.apiUsage?.callsByType,{discovery:1,trainInfo:1,availability:1});assert.equal(result.meta.apiUsage?.cacheHits,5);assert.equal(logs[0].availabilityCallCount,1);assert.equal(logs[0].externalCallCount,3);
+ assert.deepEqual(Object.keys(result.meta.apiUsage!).sort(),['budgets','cacheHits','callsByType','externalCalls','searchMode']);assert.ok(!JSON.stringify(result).includes('RAILKIT_API_KEY'));
+});
+test('quota public allowlist strips live counters from configured limits',async()=>{const {publicProviderQuota}=await import('../domain/usage/provider-quota.js');assert.equal(publicProviderQuota({source:'CONFIGURED_LIMIT',monthlyLimit:10000,monthlyRemaining:9999}).monthlyRemaining,undefined);assert.equal(publicProviderQuota({source:'PROVIDER',monthlyRemaining:7}).monthlyRemaining,7);});

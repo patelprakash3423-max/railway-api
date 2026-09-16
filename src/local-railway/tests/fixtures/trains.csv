@@ -1,0 +1,16 @@
+number,name,type,type_label,runs_days,source_code,source,dest_code,destination,distance_km,travel_time,num_stops
+10001,Synthetic 10001,,,Daily,AAA,AAA,DDD,DDD,600,,2
+10002,Synthetic 10002,,,Daily,AAA,AAA,BBB,BBB,200,,2
+10003,Synthetic 10003,,,Daily,BBB,BBB,DDD,DDD,300,,2
+10004,Synthetic 10004,,,Daily,BBB,BBB,CCC,CCC,100,,2
+10005,Synthetic 10005,,,Daily,CCC,CCC,DDD,DDD,200,,2
+10006,Synthetic 10006,,,Daily,AAA,AAA,DDD,DDD,650,,2
+10007,Synthetic 10007,,,Mon,AAA,AAA,DDD,DDD,600,,2
+10008,Synthetic 10008,,,Daily,BBB,BBB,DDD,DDD,300,,2
+10009,Synthetic 10009,,,Fri,NNN,NNN,BBB,BBB,100,,2
+10010,Synthetic 10010,,,Sat,BBB,BBB,CCC,CCC,100,,2
+10011,Synthetic 10011,,,Sat,CCC,CCC,PPP,PPP,200,,2
+10012,Synthetic 10012,,,Daily,BBB,BBB,EEE,EEE,200,,3
+10013,Synthetic 10013,,,Daily,EEE,EEE,DDD,DDD,200,,2
+10014,Synthetic 10014,,,Daily,NDLS,NDLS,PUNE,PUNE,1500,,2
+10015,Synthetic 10015,,,Daily,AAA,AAA,DDD,DDD,400,,4

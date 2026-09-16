@@ -1,0 +1,6 @@
+import type { ConnectionSafety } from '../../journey/connection/timing.js';
+import type { RailwayDatasetMetadata } from '../types.js';
+export interface ScheduledTrainSegment { trainNumber: string; trainName: string; from: string; to: string; boardingDate: string; originDate: string; departureDateTime: string; arrivalDateTime: string; distanceKm?: number }
+export interface ScheduledJourney { from: string; to: string; departureDateTime: string; arrivalDateTime: string; durationMinutes: number; changes: number; segments: ScheduledTrainSegment[]; connections: { station: string; minutes: number; safety: ConnectionSafety }[]; totalDistanceKm?: number }
+export interface PlannerDiagnostics { directTrainsConsidered: number; firstLegTrainsConsidered: number; trainsConsidered: number; interchangeStationsConsidered: number; partialPathsGenerated: number; pathsTimingPruned: number; pathsLoopPruned: number; pathsCalendarPruned: number; completedJourneys: number; rowsConsidered: number; boundsPruned: number; maxFrontier: number; queryDurationMs: number; truncated: boolean }
+export interface ScheduledSearchResult { kind: 'SCHEDULED_CANDIDATES_ONLY'; dataset: RailwayDatasetMetadata; journeys: ScheduledJourney[]; diagnostics: PlannerDiagnostics }

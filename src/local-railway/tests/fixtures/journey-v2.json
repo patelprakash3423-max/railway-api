@@ -1,0 +1,101 @@
+{
+  "requestId": "offline-fixture",
+  "search": {
+    "from": "NDLS",
+    "to": "SV",
+    "date": "20-09-2099",
+    "classes": [
+      "3A"
+    ],
+    "mode": "STANDARD",
+    "quota": "GN"
+  },
+  "results": [
+    {
+      "id": "two-train-fixture",
+      "status": "FULLY_RESERVED_USABLE",
+      "from": "NDLS",
+      "to": "SV",
+      "departureDateTime": "2099-09-20T21:25:00+05:30",
+      "arrivalDateTime": "2099-09-21T12:00:00+05:30",
+      "totalDurationMinutes": 875,
+      "totalDistanceKm": 904,
+      "trainChanges": 1,
+      "classChanges": 0,
+      "reservedCoverageRatio": 1,
+      "unknownDistanceKm": 0,
+      "totalFare": {
+        "status": "COMPLETE",
+        "amount": 1565,
+        "currency": "INR"
+      },
+      "connections": [
+        {
+          "station": "GD",
+          "waitMinutes": 33,
+          "safety": "TIGHT"
+        }
+      ],
+      "legs": [
+        {
+          "trainNumber": "12556",
+          "trainName": "GORAKHDHAM EXP",
+          "scheduledFrom": "NDLS",
+          "scheduledTo": "GD",
+          "departureDateTime": "2099-09-20T21:25:00+05:30",
+          "arrivalDateTime": "2099-09-21T07:00:00+05:30",
+          "distanceKm": 631,
+          "recoveryStatus": "WHOLE_LEG_USABLE",
+          "unknownDistanceKm": 0,
+          "segments": [
+            {
+              "type": "RESERVED",
+              "fromStation": "NDLS",
+              "toStation": "GD",
+              "selectedClass": "3A",
+              "availabilityStatus": "AVAILABLE",
+              "distanceKm": 631,
+              "fare": 1045,
+              "departureDateTime": "2099-09-20T21:25:00+05:30",
+              "arrivalDateTime": "2099-09-21T07:00:00+05:30",
+              "reservationCount": 1
+            }
+          ]
+        },
+        {
+          "trainNumber": "15034",
+          "trainName": "LJN PPTA EXP",
+          "scheduledFrom": "GD",
+          "scheduledTo": "SV",
+          "departureDateTime": "2099-09-21T07:33:00+05:30",
+          "arrivalDateTime": "2099-09-21T12:00:00+05:30",
+          "distanceKm": 273,
+          "recoveryStatus": "WHOLE_LEG_USABLE",
+          "unknownDistanceKm": 0,
+          "segments": [
+            {
+              "type": "RESERVED",
+              "fromStation": "GD",
+              "toStation": "SV",
+              "selectedClass": "3A",
+              "availabilityStatus": "AVAILABLE",
+              "distanceKm": 273,
+              "fare": 520,
+              "departureDateTime": "2099-09-21T07:33:00+05:30",
+              "arrivalDateTime": "2099-09-21T12:00:00+05:30",
+              "reservationCount": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "totalResults": 1,
+    "fullyReserved": 1,
+    "fullSplitClass": 0,
+    "partialRecovery": 0,
+    "scheduledFallback": 0,
+    "inventoryIncomplete": 0
+  }
+}

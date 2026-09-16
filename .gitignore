@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+*.log
+.browser-test/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.download-*
+.browser-test-*/
