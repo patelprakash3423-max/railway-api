@@ -1,3 +1,5 @@
+import {ProviderConfigurationError} from '../../application/errors.js';
+import {emptyAvailabilityMetrics} from '../../providers/availability-observation.js';
 import {presentJourneys} from '../../journey/presentation/index.js';
 import {resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -51,16 +53,19 @@ export function serializeJourneyV2(j:RecoveredJourney):JourneyV2Result{
 export class JourneyV2ApiService {
  constructor(private readonly database:RailwayDatabase,private readonly provider:AvailabilityProvider,private readonly options:{diagnostics?:boolean;logger?:(record:Record<string,unknown>)=>void}={}){}
  async search(input:unknown,requestId:string=randomUUID()):Promise<JourneyV2Response>{
-  const start=performance.now();let search:JourneyV2Response['search']|undefined;
+  const start=performance.now();let search:JourneyV2Response['search']|undefined;let inventoryStarted=false;
   const log=(event:string,fields:Record<string,unknown>={})=>{try{this.options.logger?.({event,requestId,...(search?{from:search.from,to:search.to,date:search.date,mode:search.mode}:{}),...fields});}catch{/* Logging cannot fail a search. */}};
   try{
    search=validateJourneyV2Request(input);
    if(!this.database.station(search.from)||!this.database.station(search.to))throw new PublicError('INVALID_STATION','Station code is not present in the local railway dataset.');
+   this.provider.assertConfigured?.();
    log('journey_v2_search_started');
+   inventoryStarted=true;
    const r=await new PlannerV2JourneyRecoveryService(this.database,{getAvailability:r=>this.provider.getAvailability(r)}).search({source:search.from,destination:search.to,journeyDate:search.date,requestedClasses:search.classes==='ALL'?['ALL']:search.classes,mode:search.mode,quota:'GN'});
    const d=r.diagnostics,{results,presentation}=presentJourneys(r.journeys.map(serializeJourneyV2));
-   log('journey_v2_search_completed',{plannerCandidates:d.plannerCandidatesReceived,resultCount:results.length,availabilityCalls:d.availabilityRequestsUsed,budgetLimit:d.availabilityBudgetLimit,durationMs:Math.round(performance.now()-start)});
-   return {requestId,search,results,presentation,summary:{totalResults:results.length,fullyReserved:d.fullReservedJourneys,fullSplitClass:d.fullSplitClassJourneys,partialRecovery:d.partialRecoveryJourneys,scheduledFallback:d.scheduledFallbackJourneys,inventoryIncomplete:d.inventoryIncompleteJourneys},...(this.options.diagnostics?{diagnostics:{plannerCandidates:d.plannerCandidatesReceived,availabilityCalls:d.availabilityRequestsUsed,wholeLegCalls:d.wholeLegRequests,recoveryCalls:d.recoveryIntervalRequests,cacheHits:d.availabilityCacheHits,budgetLimit:d.availabilityBudgetLimit,budgetUsed:d.availabilityRequestsUsed,budgetRemaining:d.budgetRemaining,recoveryReserveInitial:d.recoveryReserveInitial,recoveryReserveUsed:d.recoveryReserveUsed,recoveryReserveReleased:d.recoveryReserveReleased,availableResponses:d.availableResponses,racResponses:d.racResponses,waitlistResponses:d.waitlistResponses,unsupportedClassResponses:d.unsupportedClassResponses,providerErrors:d.providerErrors,discoveryCalls:0 as const,trainInfoCalls:0 as const,truncated:d.truncated||r.plannerDiagnostics?.truncated===true}}:{})};
-  }catch(error){log('journey_v2_search_failed',{code:error instanceof PublicError?error.code:'INTERNAL_ERROR',durationMs:Math.round(performance.now()-start)});throw error;}
+   const metrics={attemptedAvailabilityChecks:d.attemptedAvailabilityChecks,actualSdkInvocations:d.actualSdkInvocations,cacheHits:d.cacheHits,providerSuccesses:d.providerSuccesses,providerErrors:d.providerErrors,localConfigurationFailures:d.localConfigurationFailures,unsupportedClassSkips:d.unsupportedClassSkips};
+   log('journey_v2_search_completed',{...metrics,availabilityCallsMeaning:'BUDGETED_CHECKS',plannerCandidates:d.plannerCandidatesReceived,resultCount:results.length,availabilityCalls:d.availabilityRequestsUsed,budgetLimit:d.availabilityBudgetLimit,durationMs:Math.round(performance.now()-start)});
+   return {requestId,search,results,presentation,summary:{totalResults:results.length,fullyReserved:d.fullReservedJourneys,fullSplitClass:d.fullSplitClassJourneys,partialRecovery:d.partialRecoveryJourneys,scheduledFallback:d.scheduledFallbackJourneys,inventoryIncomplete:d.inventoryIncompleteJourneys},...(this.options.diagnostics?{diagnostics:{...metrics,plannerCandidates:d.plannerCandidatesReceived,availabilityCalls:d.availabilityRequestsUsed,wholeLegCalls:d.wholeLegRequests,recoveryCalls:d.recoveryIntervalRequests,cacheHits:d.availabilityCacheHits,budgetLimit:d.availabilityBudgetLimit,budgetUsed:d.availabilityRequestsUsed,budgetRemaining:d.budgetRemaining,recoveryReserveInitial:d.recoveryReserveInitial,recoveryReserveUsed:d.recoveryReserveUsed,recoveryReserveReleased:d.recoveryReserveReleased,availableResponses:d.availableResponses,racResponses:d.racResponses,waitlistResponses:d.waitlistResponses,unsupportedClassResponses:d.unsupportedClassResponses,providerErrors:d.providerErrors,discoveryCalls:0 as const,trainInfoCalls:0 as const,truncated:d.truncated||r.plannerDiagnostics?.truncated===true}}:{})};
+  }catch(error){log('journey_v2_search_failed',{...(error instanceof ProviderConfigurationError&&!inventoryStarted?{...emptyAvailabilityMetrics(),localConfigurationFailures:1,failureCategory:'LOCAL_CONFIGURATION_FAILURE'}:{}),code:error instanceof PublicError?error.code:'INTERNAL_ERROR',durationMs:Math.round(performance.now()-start)});throw error;}
  }
 }

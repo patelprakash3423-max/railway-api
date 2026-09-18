@@ -3,9 +3,11 @@ import type {RailwayDatabase} from '../../local-railway/database.js';
 import type {AvailabilityProvider} from '../../journey/availability/types.js';
 import type {HardeningConfig} from '../../config/hardening.js';
 import {searchModeConfig} from '../../application/search-mode.js';
-import {PublicError} from '../../application/errors.js';
+import {PublicError,ProviderConfigurationError} from '../../application/errors.js';
+import {randomUUID} from 'node:crypto';
+import {chargeAvailabilitySdk,emptyAvailabilityMetrics} from '../../providers/availability-observation.js';
 import {parseDate} from '../../journey/connection/timing.js';
-import {SearchProtection} from '../search-protection.js';
+import {SearchProtection,AdmissionError} from '../search-protection.js';
 import {abortable,inAvailabilityScope} from '../../providers/railkit/availability-abort.js';
 export interface SearchContext {signal?:AbortSignal;clientId?:string}
 export function validateBookingDate(date:string,horizon:number,now=Date.now()){
@@ -19,7 +21,12 @@ export function guardedProvider(provider:AvailabilityProvider,signal:AbortSignal
   const timeout=new AbortController();
   const timer=setTimeout(()=>timeout.abort(new PublicError('PROVIDER_TIMEOUT','Availability provider timed out.',504)),timeoutMs);
   const combined=AbortSignal.any([signal,timeout.signal]);
-  try{return await abortable(combined,()=>{combined.throwIfAborted();consume();return inAvailabilityScope(combined,()=>provider.getAvailability(request));});}
+  try{return await abortable(combined,()=>{
+   combined.throwIfAborted();
+   const invoke=()=>inAvailabilityScope(combined,()=>provider.getAvailability(request));
+   if(provider.quotaAccounting==='SDK_INVOCATION')return chargeAvailabilitySdk(()=>{combined.throwIfAborted();consume();},invoke);
+   consume();return invoke();
+  });}
   finally{clearTimeout(timer);}
  }};
 }
@@ -27,11 +34,28 @@ export function guardedProvider(provider:AvailabilityProvider,signal:AbortSignal
 export class ProtectedJourneyService {
  private protection:SearchProtection;
  constructor(private readonly database:RailwayDatabase,private readonly provider:AvailabilityProvider,private readonly config:HardeningConfig,private readonly options:{diagnostics?:boolean;logger?:(r:Record<string,unknown>)=>void}={},private readonly now:()=>number=Date.now){this.protection=new SearchProtection(config,now);}
- async search(input:unknown,requestId?:string,context:SearchContext={}){
+ async search(input:unknown,requestId:string=randomUUID(),context:SearchContext={}){
   const search=validateJourneyV2Request(input);validateBookingDate(search.date,this.config.horizonDays,this.now());
   if(!this.database.station(search.from)||!this.database.station(search.to))throw new PublicError('INVALID_STATION','Station code is not present in the local railway dataset.');
   context.signal?.throwIfAborted();
-  const lease=this.protection.acquire(context.clientId??'unknown-client',searchModeConfig(search.mode).budget!.maxAvailabilityCalls!);
+  const client=context.clientId??'unknown-client';
+  const budgetLimit=searchModeConfig(search.mode).budget!.maxAvailabilityCalls!;
+  let lease:ReturnType<SearchProtection['acquire']>;
+  try{
+   // Search-time validation keeps health available without credentials. No planner,
+   // reservation or per-check budget is entered on local configuration failure.
+   this.provider.assertConfigured?.();
+   lease=this.protection.acquire(client,budgetLimit);
+  }catch(error){
+   if(error instanceof ProviderConfigurationError||error instanceof AdmissionError){
+    try{this.options.logger?.({level:'error',event:'journey_v2_search_rejected',requestId,
+     code:error.code,failureCategory:error instanceof AdmissionError?error.failureCategory:'LOCAL_CONFIGURATION_FAILURE',
+     ...emptyAvailabilityMetrics(),localConfigurationFailures:Number(error instanceof ProviderConfigurationError),
+     budgetLimit,budgetUsed:0,availabilityCalls:0,availabilityCallsMeaning:'BUDGETED_CHECKS',
+     protection:error instanceof AdmissionError?error.counters:this.protection.snapshot(client)});}catch{/* Logging cannot affect admission. */}
+   }
+   throw error;
+  }
   const deadline=new AbortController();
   const signal=context.signal?AbortSignal.any([context.signal,deadline.signal]):deadline.signal;
   const end=this.now()+this.config.searchTimeoutMs;

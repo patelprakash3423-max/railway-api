@@ -28,7 +28,7 @@ npm start
 
 `npm start` verifies the DB checksum again, then executes `node dist/api/main.js`. No tsx runtime dependency is needed. Set provisioning variables in the process environment (the provisioning script does not load `.env`). API configuration reads the repository-root `.env` for local use. Compiled startup also resolves that root correctly.
 
-`GET /health` returns `{requestId,status:"ok"}` without provider calls. RailKit credentials are checked lazily, so health works without a key. Search requires `RAILKIT_API_KEY`, kept only in the server secret environment. `POST /api/journeys/v2/search` accepts `{from,to,date,classes,mode?,quota?}`; date is DD-MM-YYYY, classes is an array or ALL, mode defaults STANDARD, quota is GN. Responses contain results, presentation, summary and optional diagnostics. Station autocomplete is owned by the frontend; there is no station HTTP endpoint.
+`GET /health` returns `{requestId,status:"ok"}` without provider calls. RailKit configuration is checked once at search admission before planning, quota reservation, or availability checks, so health still works without a key. Missing, blank, placeholder, non-ASCII, or internally whitespace-containing keys return HTTP 503 with `PROVIDER_CONFIGURATION_ERROR` and no inventory claims. Local validation cannot establish whether a syntactically valid key is authentic, active, or authorized; that requires a provider response. Search requires `RAILKIT_API_KEY`, kept only in the server secret environment. `POST /api/journeys/v2/search` accepts `{from,to,date,classes,mode?,quota?}`; date is DD-MM-YYYY, classes is an array or ALL, mode defaults STANDARD, quota is GN. Responses contain results, presentation, summary and optional diagnostics. Station autocomplete is owned by the frontend; there is no station HTTP endpoint.
 
 ## SQLite deployment artifact
 
@@ -40,7 +40,7 @@ For a release, upload the existing snapshot as `railway.sqlite` to a versioned G
 
 ## Beta protection and proxy trust
 
-Defaults (all configurable in `.env.example`): five searches per client per ten minutes, one concurrent search per client, three globally. Admission reserves the mode's worst-case provider budget against process-local monthly (10,000) and rolling burst (120 calls/10 minutes) counters. Actual provider invocations are charged, including failures, and unused reservations are returned. Existing per-search limits remain QUICK 12, STANDARD 30, DEEP 40.
+Defaults (all configurable in `.env.example`): five searches per client per ten minutes, one concurrent search per client, three globally. Admission reserves the mode's worst-case provider budget against process-local monthly (10,000) and rolling burst (120 calls/10 minutes) counters. Production RailKit quota is charged immediately before each availability SDK invocation, after local request validation and configuration, including invocations that subsequently fail. Local configuration/input failures before this boundary do not consume provider quota. Unused reservations are returned. Injected providers without SDK-boundary instrumentation retain conservative adapter-invocation charging. Existing per-search limits remain QUICK 12, STANDARD 30, DEEP 40.
 
 All counters and reservations are in memory, reset on process restart/deployment and are not shared across instances. Monthly usage also resets at UTC calendar-month boundaries. They are conservative beta protection, not authoritative RailKit account usage. Set limits below remaining account quota; use one Render instance. Multiple restarts/instances can bypass aggregate protection.
 
@@ -50,7 +50,32 @@ Provider timeout: 15 seconds. Overall search deadline: 90 seconds. AsyncLocalSto
 
 Journey dates must be today through 60 days ahead, inclusive, in Asia/Kolkata calendar days. `MAX_BOOKING_HORIZON_DAYS` is configurable beta policy, not a permanent railway booking rule. Mode requires an actual string. Invalid input is rejected before provider work.
 
-Set `CORS_ORIGIN` to one exact HTTPS frontend origin (no trailing slash). Local development may use `http://localhost:3000`; previews are not automatically allowed. CORS is not authentication. Logs include request ID, route/date/mode, duration and call counts; protect access and retention. No secrets or full provider URLs are intentionally logged.
+Set `CORS_ORIGIN` to a comma-separated allowlist of exact HTTP(S) origins (no trailing slash or wildcard). For local development, set `CORS_ORIGIN=http://localhost:3000,https://railway-website-sage.vercel.app` in `.env` and restart `npm run dev:api`. On Render, keep `CORS_ORIGIN=https://railway-website-sage.vercel.app`; existing single-origin settings remain supported. Empty/unset values grant no CORS permission, and previews are not automatically allowed. Allowed preflights return 204 with the matching origin, methods `POST, OPTIONS`, headers `Content-Type, X-Request-Id`, and `Vary: Origin`. CORS is not authentication. Logs include request ID, route/date/mode, duration and call counts; protect access and retention. No secrets or full provider URLs are intentionally logged.
+
+## Availability diagnostics and admission logs
+
+V2 diagnostics remain opt-in through `EXPOSE_SEARCH_DIAGNOSTICS` or `ENABLE_API_DIAGNOSTICS`. Existing fields remain compatible; none of the check counters prove external HTTP requests or provider billing.
+
+| Field | Meaning |
+| --- | --- |
+| `attemptedAvailabilityChecks` | Distinct uncached availability checks admitted to the unchanged per-search budget, before adapter execution. |
+| `actualSdkInvocations` | Request-scoped availability SDK invocations observed immediately at the RailKit call boundary, after local validation/configuration and quota charging. Injected fake providers report zero. |
+| `cacheHits` | Exact completed or in-flight reuse through `AvailabilitySession.get`; unchanged legacy semantics. Allocation's direct cache inspection/rehydration is not counted. |
+| `providerSuccesses` | Checks yielding validated, matching-request/date inventory: AVAILABLE, RAC, WAITLIST, or NOT_AVAILABLE. This is not an HTTP-200 counter. |
+| `providerErrors` | Existing check-level failure counter, including invalid/missing provider evidence and adapter validation failures; excludes separately counted unsupported-class and local configuration failures. |
+| `localConfigurationFailures` | One for a rejected search's local configuration failure, recorded in its structured log; zero in successful search diagnostics. A standalone session latches a configuration failure once. |
+| `unsupportedClassSkips` | Unique train/class pairs excluded by existing class eligibility filters during this search. Deduplicated across candidates/intervals; not a count of hypothetical HTTP requests saved. No class metadata is added by this instrumentation. |
+| `availabilityCalls`, `budgetUsed`, internal `availabilityRequestsUsed` | Compatibility aliases for budgeted checks, not external calls. |
+| `wholeLegCalls`, `recoveryCalls` | Existing breakdown of budgeted checks; their sum equals `availabilityCalls`. |
+| `availableResponses`, `racResponses`, `waitlistResponses`, `unsupportedClassResponses` | Existing normalized outcome counters; unchanged. |
+| `budgetLimit`, `budgetRemaining` | Existing check allowance and remaining checks; ceilings remain 12/30/40. |
+| `discoveryCalls`, `trainInfoCalls` | Still zero in the local-schedule V2 API. |
+
+`actualExternalRequests` is deliberately absent: entering SDK 5.0.3 or even delegating to `fetch` does not prove an HTTP request started on the wire. SDK invocation counts can differ from requests received or billed by RailKit. No global counter differences are used to estimate per-search activity.
+
+`journey_v2_search_rejected` logs contain `requestId`, `code`, `failureCategory`, zero check/SDK counters, the check budget, and a `protection` snapshot. Categories identify local configuration failure, client search rate, client/global concurrency, monthly/burst quota, or client capacity. Snapshots include current client searches/active count, global active count, monthly/burst usage, outstanding reservations, and configured limits; admission denials also include the requested reservation. No credentials or raw provider error messages are logged. Local configuration failure occurs before search admission and charges neither search admission nor provider quota. Valid searches still pass all existing limit checks.
+
+Completion logs include the new counters and `availabilityCallsMeaning: BUDGETED_CHECKS`. Error responses retain `{requestId,error:{code,message}}`; configuration failures are HTTP 503 rather than HTTP 200 with unverified schedule results. Health, endpoint paths, successful result structure, CORS, and request-ID behavior are unchanged. Provider HTTP error classification and unsupported-inventory semantics are separate follow-up phases, not part of this accounting change.
 
 ## Render settings
 

@@ -12,7 +12,7 @@ try {
   const database=openProductionRailwayDatabase();
   installAvailabilityAbortTransport();
   const railkit=new RailKitProvider();
-  const journeyV2=new ProtectedJourneyService(database,{getAvailability:r=>railkit.getAvailability(r)},hardeningConfig(),{diagnostics:config.exposeSearchDiagnostics||config.enableDiagnostics,logger:jsonLogger});
+  const journeyV2=new ProtectedJourneyService(database,railkit,hardeningConfig(),{diagnostics:config.exposeSearchDiagnostics||config.enableDiagnostics,logger:jsonLogger});
   const service={search:async():Promise<never>=>{throw new PublicError('ENDPOINT_RETIRED','Use /api/journeys/v2/search.',410);}};
   const server = createApiServer(service, { corsOrigin: config.corsOrigin,journeyV2 });
   server.on('error', () => { jsonLogger({ level: 'error', event: 'api_server_error' }); process.exitCode = 1; });

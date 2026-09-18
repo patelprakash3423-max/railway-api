@@ -117,3 +117,53 @@ test('HTTP adapter handles browser preflight without reading a body or invoking 
   assert.equal(s.providerCalls(), 0);
   assert.deepEqual(s.logs, []);
 });
+
+const productionOrigin = 'https://railway-website-sage.vercel.app';
+for (const allowedOrigin of [origin, productionOrigin]) {
+  test(`V2 allowlist preflight and POST preserve CORS for ${allowedOrigin}`, async () => {
+    const { apiConfig } = await import('../config/api.js');
+    const config = apiConfig({ CORS_ORIGIN: ` ${origin}, ${productionOrigin} ` });
+    let calls = 0;
+    const router = createRouter({ search: async () => { throw new Error('Unexpected legacy search'); } }, {
+      corsOrigin: config.corsOrigin,
+      journeyV2: { search: async () => { calls++; return { results: [] }; } },
+    });
+    const request = { path: '/api/journeys/v2/search', origin: allowedOrigin };
+    const reply = await router({ ...request, method: 'OPTIONS' });
+    assert.equal(reply.status, 204);
+    assert.equal(reply.body, '');
+    assert.equal(reply.headers['Access-Control-Allow-Origin'], allowedOrigin);
+    assert.equal(reply.headers['Access-Control-Allow-Methods'], 'POST, OPTIONS');
+    assert.equal(reply.headers['Access-Control-Allow-Headers'], 'Content-Type, X-Request-Id');
+    assert.equal(reply.headers.Vary, 'Origin');
+    assert.ok(reply.headers['X-Request-Id']);
+    assert.equal(reply.headers['Access-Control-Allow-Credentials'], undefined);
+    assert.equal(calls, 0);
+    const post = await router({ ...request, method: 'POST', contentType: 'application/json', body: '{}' });
+    assert.equal(post.status, 200);
+    assert.equal(post.headers['Access-Control-Allow-Origin'], allowedOrigin);
+    assert.equal(post.headers.Vary, 'Origin');
+    assert.equal(calls, 1);
+    for (const deniedOrigin of ['https://untrusted.example', `${allowedOrigin}.evil.example`, undefined]) {
+      const denied = await router({ ...request, method: 'OPTIONS', origin: deniedOrigin });
+      assert.equal(denied.status, 204);
+      assert.equal(denied.headers['Access-Control-Allow-Origin'], undefined);
+      assert.equal(denied.headers['Access-Control-Allow-Methods'], undefined);
+      assert.equal(denied.headers['Access-Control-Allow-Headers'], undefined);
+      assert.equal(denied.headers.Vary, 'Origin');
+    }
+    assert.equal(calls, 1);
+  });
+}
+
+test('CORS configuration preserves production-only settings and rejects invalid allowlist entries', async () => {
+  const { apiConfig } = await import('../config/api.js');
+  const config = apiConfig({ CORS_ORIGIN: productionOrigin });
+  const s = setup(config.corsOrigin);
+  assert.equal((await s.router({ ...preflight, origin: productionOrigin })).headers['Access-Control-Allow-Origin'], productionOrigin);
+  assert.equal((await s.router(preflight)).headers['Access-Control-Allow-Origin'], undefined);
+  assert.equal(apiConfig({}).corsOrigin, undefined);
+  for (const value of ['*', `${origin},*`, `${origin},`, `${origin},https://example.com/path`, `${origin},https://example.com/`, `${origin},ftp://example.com`]) {
+    assert.throws(() => apiConfig({ CORS_ORIGIN: value }));
+  }
+});

@@ -4,8 +4,13 @@ import type { Fare } from '../../domain/types/fare.js';
 import type { SearchMode } from '../../application/search-mode.js';
 import type { TravelClass } from '../types/journey-segment.js';
 import type { V2Journey, V2Result } from '../../local-railway/planner/v2/types.js';
+import type {AvailabilityMetrics} from '../../providers/availability-observation.js';
 /** The integration cannot access discovery or train-info methods. */
-export type AvailabilityProvider = Pick<RailwayProvider, 'getAvailability'>;
+export type AvailabilityProvider = Pick<RailwayProvider, 'getAvailability'> & {
+  assertConfigured?: () => void;
+  /** Other injected providers retain conservative adapter-invocation accounting. */
+  quotaAccounting?: 'SDK_INVOCATION';
+};
 export type InventoryStatus = 'AVAILABLE' | 'RAC' | 'WAITLIST' | 'UNAVAILABLE' | 'UNSUPPORTED_CLASS' | 'PROVIDER_ERROR';
 export type ErrorCategory = 'RATE_LIMITED' | 'INVALID_REQUEST' | 'UNSUPPORTED_CLASS' | 'BOOKING_UNSUPPORTED' | 'PROVIDER_UNAVAILABLE' | 'INVALID_PROVIDER_RESPONSE' | 'UNKNOWN_PROVIDER_ERROR';
 export interface InventoryCheck { unsupportedScope?: 'EXACT_REQUEST'; travelClass: TravelClass; status: InventoryStatus; availabilityText?: string; fare?: Fare; errorCategory?: ErrorCategory; rawDetails?: AvailabilityResult }
@@ -18,7 +23,7 @@ export interface ValidatedJourney {
   totalFare: { status: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN'; amount: number | null; knownSubtotal: number; knownLegCount: number; currency: 'INR' };
   scheduleRank: number; finalRank: number;
 }
-export interface AvailabilityDiagnostics {
+export interface AvailabilityDiagnostics extends AvailabilityMetrics {
   plannerCandidatesReceived: number; candidatesValidationStarted: number; candidatesFullyValidated: number; candidatesRejectedByInventory: number; candidatesDeferredByBudget: number;
   availabilityBudgetLimit: number; availabilityRequestsUsed: number; availabilityCacheHits: number; budgetRemaining: number;
   classRoundsAttempted: TravelClass[][]; classChecksByClass: Partial<Record<TravelClass, number>>;

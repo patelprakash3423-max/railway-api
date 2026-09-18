@@ -1,3 +1,4 @@
+import {emptyAvailabilityMetrics} from '../../providers/availability-observation.js';
 import { createHash } from 'node:crypto';
 import type { AvailabilityRequest } from '../../domain/types/availability.js';
 import { searchModeConfig } from '../../application/search-mode.js';
@@ -27,7 +28,7 @@ export class AvailabilityOrchestrator {
     if(!batches.length||batches.some(n=>!Number.isSafeInteger(n)||n<1)||!Number.isSafeInteger(target)||target<1)throw new Error('Invalid availability limits');
     const session=sharedSession??new AvailabilitySession(this.provider,this.options.budgetLimit??searchModeConfig(mode).budget!.maxAvailabilityCalls!);
     const limit=session.budget.callsUsed+session.remaining,budget=session.budget;
-    const d:AvailabilityDiagnostics={plannerCandidatesReceived:input.plannerCandidates.length,candidatesValidationStarted:0,candidatesFullyValidated:0,candidatesRejectedByInventory:0,candidatesDeferredByBudget:0,availabilityBudgetLimit:limit,availabilityRequestsUsed:0,availabilityCacheHits:0,budgetRemaining:limit,classRoundsAttempted:[],classChecksByClass:{},availableResponses:0,racResponses:0,waitlistResponses:0,unavailableResponses:0,unsupportedClassResponses:0,providerErrors:0,providerErrorCategories:{},bottleneckEarlyExits:0,atomicBudgetDeferrals:0,usableJourneysFound:0,fallbackJourneysReturned:0,batchesAttempted:0};
+    const d:AvailabilityDiagnostics={...emptyAvailabilityMetrics(),plannerCandidatesReceived:input.plannerCandidates.length,candidatesValidationStarted:0,candidatesFullyValidated:0,candidatesRejectedByInventory:0,candidatesDeferredByBudget:0,availabilityBudgetLimit:limit,availabilityRequestsUsed:0,availabilityCacheHits:0,budgetRemaining:limit,classRoundsAttempted:[],classChecksByClass:{},availableResponses:0,racResponses:0,waitlistResponses:0,unavailableResponses:0,unsupportedClassResponses:0,providerErrors:0,providerErrorCategories:{},bottleneckEarlyExits:0,atomicBudgetDeferrals:0,usableJourneysFound:0,fallbackJourneysReturned:0,batchesAttempted:0};
     const unsupported=session.unsupported;
     const cache={get:(key:string)=>session.peekKey(key),has:(key:string)=>session.hasKey(key)};
     const states=input.plannerCandidates.map((candidate,rank)=>{
@@ -35,7 +36,7 @@ export class AvailabilityOrchestrator {
       let station=candidate.from;
       for(const leg of candidate.segments){parseDate(leg.boardingDate);if(leg.fromStation!==station||leg.from!==leg.fromStation||leg.to!==leg.toStation||leg.departureDateTime.slice(0,10)!==new Date(parseDate(leg.boardingDate)*60000).toISOString().slice(0,10))throw new Error('Invalid candidate leg');station=leg.toStation;}
       if(station!==candidate.to)throw new Error('Candidate does not reach destination');
-      const allowed=candidate.segments.map(leg=>{const known=input.supportedClassesByTrain?.[leg.trainNumber];return known===undefined?requested:requested.filter(c=>known.map(normalizeClass).includes(c));});
+      const allowed=candidate.segments.map(leg=>{const known=input.supportedClassesByTrain?.[leg.trainNumber];return known===undefined?requested:requested.filter(c=>{const allowed=known.map(normalizeClass).includes(c);if(!allowed)session.recordUnsupportedClassSkip(leg.trainNumber,c);return allowed;});});
       return {candidate,rank,allowed,checks:candidate.segments.map(()=>new Map<TravelClass,InventoryCheck>()),started:false,deferred:false};
     });
     type State=typeof states[number];
@@ -43,6 +44,11 @@ export class AvailabilityOrchestrator {
     const hasUsable=(s:State,i:number)=>[...s.checks[i].values()].some(usable);
     const definitiveFailure=(s:State,i:number)=>!hasUsable(s,i)&&s.allowed[i].every(c=>{if(unsupported.get(s.candidate.segments[i].trainNumber)?.has(c))return true;const x=s.checks[i].get(c);return x&&(x.status==='WAITLIST'||x.status==='UNAVAILABLE'||x.errorCategory==='UNSUPPORTED_CLASS');});
     const isUsable=(s:State)=>s.checks.every((_,i)=>hasUsable(s,i));
+    const knownUnsupported=(s:State,i:number,c:TravelClass)=>{
+      const skipped=unsupported.get(s.candidate.segments[i].trainNumber)?.has(c);
+      if(skipped)session.recordUnsupportedClassSkip(s.candidate.segments[i].trainNumber,c);
+      return skipped;
+    };
     const get=(r:AvailabilityRequest)=>session.get(r);
     const allocation: AllocationDiagnostics = {breadthCandidatesConsidered:0,breadthCandidatesChecked:0,breadthRequests:0,completionCandidatesConsidered:0,completionCandidatesChecked:0,completionRequests:0,deepWideningCandidates:0,deepWideningRequests:0,candidatesDeferredByAtomicCost:0,candidatesDeferredByBreadthLimit:0};
     if (this.options.progressiveAllocation) {
@@ -55,7 +61,7 @@ export class AvailabilityOrchestrator {
       const done=(s:State)=>s.checks.every((_,i)=>hasUsable(s,i)||definitiveFailure(s,i));
       const atomicDeferred=new Set<State>();
       const attempt=async(s:State,c:TravelClass)=>{
-        const pending=s.checks.map((_,i)=>i).filter(i=>!hasUsable(s,i)&&s.allowed[i].includes(c)&&!unsupported.get(s.candidate.segments[i].trainNumber)?.has(c)&&!s.checks[i].has(c));
+        const pending=s.checks.map((_,i)=>i).filter(i=>!hasUsable(s,i)&&s.allowed[i].includes(c)&&!knownUnsupported(s,i,c)&&!s.checks[i].has(c));
         const requests=pending.map(i=>request(s,i,c));
         // Atomic unit: one class across ALL pending eligible legs. No partial
         // candidate/class spending when the uncached group cannot fit.
@@ -67,7 +73,7 @@ export class AvailabilityOrchestrator {
       const breadthChecked=new Set<State>(),completionChecked=new Set<State>(),deepChecked=new Set<State>();
       const maxBreadth={QUICK:3,STANDARD:5,DEEP:7}[mode];
       const firstClass=rounds[0]?.[0];
-      const missing=(s:State,classes:TravelClass[])=>session.missingRequests(s.checks.flatMap((_,i)=>hasUsable(s,i)?[]:classes.filter(c=>s.allowed[i].includes(c)&&!unsupported.get(s.candidate.segments[i].trainNumber)?.has(c)).map(c=>request(s,i,c))));
+      const missing=(s:State,classes:TravelClass[])=>session.missingRequests(s.checks.flatMap((_,i)=>hasUsable(s,i)?[]:classes.filter(c=>s.allowed[i].includes(c)&&!knownUnsupported(s,i,c)).map(c=>request(s,i,c))));
       const leader=states.find(s=>!done(s));
       const fullCost=leader?missing(leader,rounds.flat()):0;
       const firstCost=leader&&firstClass?missing(leader,[firstClass]):0;
@@ -133,7 +139,7 @@ export class AvailabilityOrchestrator {
           if(isUsable(s)||(complete?s.checks.every((_,i)=>hasUsable(s,i)||definitiveFailure(s,i)):s.checks.some((_,i)=>definitiveFailure(s,i))))continue;
           const pending=s.checks.map((_,i)=>i).filter(i=>!hasUsable(s,i)&&!definitiveFailure(s,i));
           const classes=(i:number)=>{
-            const permitted=cumulative.filter(c=>s.allowed[i].includes(c)&&!unsupported.get(s.candidate.segments[i].trainNumber)?.has(c));
+            const permitted=cumulative.filter(c=>s.allowed[i].includes(c)&&!knownUnsupported(s,i,c));
             // A cached usable class is sufficient; do not reserve fresh calls
             // merely to rediscover a usable shared leg in another class.
             const cached=permitted.filter(c=>{const x=s.checks[i].get(c)??cache.get(requestKey(request(s,i,c)));return x&&usable(x);});

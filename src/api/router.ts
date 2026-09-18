@@ -9,12 +9,13 @@ export interface ApiRequest extends SearchContext { method: string; path: string
 export interface ApiReply { status: number; headers: Record<string, string>; body: string }
 export interface RouterOptions { corsOrigin?: string; logger?: SearchLogger; journeyV2?: {search(input:unknown,requestId?:string,context?:SearchContext):Promise<unknown>} }
 export function createRouter(service: Pick<JourneySearchService, 'search'>, options: RouterOptions = {}) {
+  const allowedOrigins = new Set(options.corsOrigin?.split(',').map(origin => origin.trim()) ?? []);
   return async (request: ApiRequest): Promise<ApiReply> => {
     // Always generate: client-supplied identifiers are not trusted or echoed.
     const requestId = request.requestId ?? randomUUID();
     const headers: Record<string, string> = { 'Content-Type': 'application/json; charset=utf-8', 'X-Request-Id': requestId };
-    if (options.corsOrigin && request.origin === options.corsOrigin) {
-      headers['Access-Control-Allow-Origin'] = options.corsOrigin;
+    if (request.origin && allowedOrigins.has(request.origin)) {
+      headers['Access-Control-Allow-Origin'] = request.origin;
       headers['Vary'] = 'Origin';
       headers['Access-Control-Expose-Headers'] = 'X-Request-Id';
     }

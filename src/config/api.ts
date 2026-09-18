@@ -10,8 +10,10 @@ export function apiConfig(env: NodeJS.ProcessEnv = process.env) {
   if (expose !== 'true' && expose !== 'false') throw new Error('EXPOSE_SEARCH_DIAGNOSTICS must be true or false.');
   const corsOrigin = env.CORS_ORIGIN || undefined;
   if (corsOrigin) {
-    const url = new URL(corsOrigin);
-    if (!['http:', 'https:'].includes(url.protocol) || url.origin !== corsOrigin) throw new Error('CORS_ORIGIN must be one explicit HTTP(S) origin.');
+    for (const origin of corsOrigin.split(',').map(value => value.trim())) {
+      const url = new URL(origin);
+      if (!['http:', 'https:'].includes(url.protocol) || url.origin !== origin) throw new Error('CORS_ORIGIN must contain explicit HTTP(S) origins separated by commas.');
+    }
   }
   return { exposeSearchDiagnostics: expose === 'true', providerQuota: configuredProviderQuota(env), port, host: env.HOST || '0.0.0.0', enableDiagnostics: diagnostics === 'true', corsOrigin };
 }

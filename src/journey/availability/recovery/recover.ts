@@ -61,15 +61,21 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   const edges=():IntervalEdge[]=>[...intervals.values()].flatMap(v=>[...v.checks.values()].filter(usable).map(check=>{const dep=datetime(origin+eventMinute(nodes[v.a],false)),arr=datetime(origin+eventMinute(nodes[v.b],true)),distance=nodes[v.b].distanceKm!-nodes[v.a].distanceKm!,status=check.status as 'AVAILABLE'|'RAC';const segment:ReservedSegment={type:'RESERVED',trainNumber,fromStation:nodes[v.a].stationCode,toStation:nodes[v.b].stationCode,departureDateTime:dep,arrivalDateTime:arr,selectedClass:check.travelClass,quota:'GN',availabilityStatus:status,availabilityText:check.availabilityText,distanceKm:distance,fare:check.fare,reservationParts:[{fromStation:nodes[v.a].stationCode,toStation:nodes[v.b].stationCode,departureDateTime:dep,arrivalDateTime:arr,boardingDate:request(v,check.travelClass).journeyDate,distanceKm:distance,availabilityStatus:status,availabilityText:check.availabilityText,fare:check.fare}]};return{from:v.a,to:v.b,segment};}));
   const paths=()=>intervalPaths(nodes.map(s=>({code:s.stationCode,distance:s.distanceKm!})),edges(),limits.maxStatesPerNode,n=>{d.statesPruned+=n;truncate('pathStates');});
   const fullFound=()=>paths().some(p=>p.segments.length>0&&p.segments.every(s=>s.type==='RESERVED'));
+  // Observe existing exclusions only; interval eligibility/order is unchanged.
+  const knownUnsupported=(c:TravelClass)=>{
+    const skipped=session.unsupported.get(trainNumber)?.has(c);
+    if(skipped)session.recordUnsupportedClassSkip(trainNumber,c);
+    return skipped;
+  };
   const evaluate=async(group:Interval[],classes:TravelClass[])=>{
     const pending=group.filter(v=>![...v.checks.values()].some(usable));
-    const plan=pending.map(v=>{const cached=requested.filter(c=>{const x=session.peekKey(requestKey(request(v,c)));return x&&usable(x);});return{v,classes:(cached.length?cached:classes).filter(c=>!v.checks.has(c)&&!session.unsupported.get(trainNumber)?.has(c))};});
+    const plan=pending.map(v=>{const cached=requested.filter(c=>{const x=session.peekKey(requestKey(request(v,c)));return x&&usable(x);});return{v,classes:(cached.length?cached:classes).filter(c=>!v.checks.has(c)&&!knownUnsupported(c))};});
     const requests=plan.flatMap(p=>p.classes.map(c=>request(p.v,c)));
     if(!session.canAfford(requests)){d.atomicIntervalDeferrals++;truncate('availabilityBudget');return;}
     // Largest coverage block first; a cache-known poor block wins a length tie.
     plan.sort((x,y)=>(nodes[y.v.b].distanceKm!-nodes[y.v.a].distanceKm!)-(nodes[x.v.b].distanceKm!-nodes[x.v.a].distanceKm!)||x.v.a-y.v.a||x.v.b-y.v.b);
     for(const {v,classes:availableClasses} of plan)for(const c of availableClasses){
-      if(session.unsupported.get(trainNumber)?.has(c))continue;
+      if(knownUnsupported(c))continue;
       const r=request(v,c),check=await session.get(r);v.checks.set(c,check);checks.push({fromStation:r.fromStationCode,toStation:r.toStationCode,boardingDate:r.journeyDate,check});
       if(check.status==='AVAILABLE')d.intervalsAvailable++;else if(check.status==='RAC')d.intervalsRac++;else if(check.status==='WAITLIST')d.intervalsWaitlist++;else if(check.status==='PROVIDER_ERROR')d.providerErrors++;
       if(check.status==='AVAILABLE')break;

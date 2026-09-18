@@ -1,12 +1,12 @@
 import { config } from 'dotenv';
 import { configure } from 'railkit';
+import { ProviderConfigurationError } from '../application/errors.js';
 
 config({ path: new URL('../../.env', import.meta.url), quiet: true });
 
 export function configureRailKit(): void {
-  if (!process.env.RAILKIT_API_KEY?.trim() ||
-      process.env.RAILKIT_API_KEY.trim() === 'your_api_key_here') {
-    throw new Error('RAILKIT_API_KEY is missing. Add your real API key to .env before running this script.');
-  }
-  configure(process.env.RAILKIT_API_KEY);
+  const key = process.env.RAILKIT_API_KEY?.trim();
+  // Validate local configuration only. Authenticity/revocation requires the provider.
+  if (!key || key === 'your_api_key_here' || !/^[\x21-\x7e]+$/.test(key)) throw new ProviderConfigurationError();
+  try { configure(key); } catch { throw new ProviderConfigurationError(); }
 }
