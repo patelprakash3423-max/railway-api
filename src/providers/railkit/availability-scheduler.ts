@@ -1,3 +1,4 @@
+import {availabilityRequestKey} from '../../utils/availability-key.js';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {hardeningConfig,type HardeningConfig} from '../../config/hardening.js';
 import {PublicError} from '../../application/errors.js';
@@ -8,6 +9,8 @@ import {providerTransportEvidence,type ProviderFailureCategory} from '../../doma
 import {normalizeAvailability} from './railkit-normalizers.js';
 import type {AvailabilityRequest} from '../../domain/types/availability.js';
 
+type CacheKind='INVENTORY'|'UNSUPPORTED_CLASS';
+type CachedEvidence={expires:number;value:unknown};
 type Waiter={signal?:AbortSignal;run:ReturnType<typeof AsyncLocalStorage.snapshot>;resolve:(v:unknown)=>void;reject:(e:unknown)=>void;cleanup:()=>void;queuedAt:number;waited:boolean};
 type Entry={timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
 /** One default instance covers every raw/normalized availability SDK entry point.
@@ -20,14 +23,20 @@ export class AvailabilityScheduler {
  private active=0;
  private pending=new Map<string,Entry>();
  private queue:Entry[]=[];
- private cache=new Map<string,{expires:number;value:unknown}>();
+ // One cache mechanism with independent retention/capacity policies.
+ private caches:Record<CacheKind,Map<string,CachedEvidence>>={INVENTORY:new Map(),UNSUPPORTED_CLASS:new Map()};
  constructor(private readonly config:HardeningConfig,private readonly now=Date.now){this.quota=new ProviderQuota(config,now);}
  execute(request:AvailabilityRequest,invoke:()=>Promise<unknown>):Promise<unknown>{
   const signal=availabilitySignal();signal?.throwIfAborted();
-  const key=JSON.stringify([request.trainNumber,request.fromStationCode,request.toStationCode,request.journeyDate,request.travelClass,request.quota]);
-  const cached=this.cache.get(key);
-  if(cached&&cached.expires>this.now()){availabilityMetric('sharedCacheHits');return Promise.resolve(structuredClone(cached.value));}
-  if(cached)this.cache.delete(key);
+  const key=availabilityRequestKey(request);
+  for(const kind of ['INVENTORY','UNSUPPORTED_CLASS'] as const){
+   const cache=this.caches[kind],cached=cache.get(key);
+   if(cached&&cached.expires>this.now()){
+    availabilityMetric(kind==='INVENTORY'?'sharedCacheHits':'unsupportedEvidenceCacheHits');
+    return Promise.resolve(structuredClone(cached.value));
+   }
+   if(cached)cache.delete(key);
+  }
   let entry=this.pending.get(key);
   if(entry)availabilityMetric('sharedInflightHits');
   else{
@@ -100,17 +109,33 @@ export class AvailabilityScheduler {
     if(normalized.providerState==='SUCCESS'&&matching.length===1&&
        ['AVAILABLE','RAC','WAITLIST','NOT_AVAILABLE'].includes(matching[0].state)&&
        !(matching[0].canBook===false&&['AVAILABLE','RAC'].includes(matching[0].state))){
-     const time=this.now();
-     for(const [key,cached]of this.cache)if(cached.expires<=time)this.cache.delete(key);
-     this.cache.delete(entry.key);
-     while(this.cache.size>=this.config.providerCacheEntries)this.cache.delete(this.cache.keys().next().value!);
-     this.cache.set(entry.key,{expires:time+this.config.providerCacheTtlMs,value:structuredClone(value)});
+     this.remember('INVENTORY',entry.key,value);
+    }else if(normalized.failureCategory==='UNSUPPORTED_CLASS'){
+     this.remember('UNSUPPORTED_CLASS',entry.key,value);
+     first.run(()=>availabilityMetric('providerUnsupportedResponses'));
     }
     this.settle(entry,value);
-   },error=>this.settle(entry,undefined,{transportEvidence:providerTransportEvidence(entry.transportFailure?{failureCategory:entry.transportFailure}:error,entry.httpStatus)})).finally(()=>{
+   },error=>{
+    const transportEvidence=providerTransportEvidence(entry.transportFailure?{failureCategory:entry.transportFailure}:error,entry.httpStatus);
+    if(!entry.controller.signal.aborted&&transportEvidence.failureCategory==='UNSUPPORTED_CLASS'){
+     this.remember('UNSUPPORTED_CLASS',entry.key,{success:false,error:transportEvidence.message,transportEvidence});
+     first.run(()=>availabilityMetric('providerUnsupportedResponses'));
+    }
+    this.settle(entry,undefined,{transportEvidence});
+   }).finally(()=>{
     clearTimeout(entry.timer);this.remove(entry);this.active--;this.drain();
    });
   }
+ }
+ private remember(kind:CacheKind,key:string,value:unknown){
+  const cache=this.caches[kind],time=this.now();
+  const ttl=kind==='INVENTORY'?this.config.providerCacheTtlMs:this.config.unsupportedCacheTtlMs;
+  const limit=kind==='INVENTORY'?this.config.providerCacheEntries:this.config.unsupportedCacheEntries;
+  for(const [key,cached]of cache)if(cached.expires<=time)cache.delete(key);
+  // Reads do not refresh TTL or insertion order; eviction is deterministic FIFO.
+  this.caches.INVENTORY.delete(key);this.caches.UNSUPPORTED_CLASS.delete(key);
+  while(cache.size>=limit)cache.delete(cache.keys().next().value!);
+  cache.set(key,{expires:time+ttl,value:structuredClone(value)});
  }
  private settle(entry:Entry,value?:unknown,error?:unknown){
   this.remove(entry);

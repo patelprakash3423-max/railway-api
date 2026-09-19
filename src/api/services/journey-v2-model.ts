@@ -10,7 +10,7 @@ export interface JourneyV2Result {
  connections:{station:string;waitMinutes:number;safety:'TIGHT'|'GOOD'|'LONG'}[];
  legs:{trainNumber:string;trainName:string;scheduledFrom:string;scheduledTo:string;departureDateTime:string;arrivalDateTime:string;distanceKm:number;recoveryStatus:string;unknownDistanceKm:number;segments:JourneyV2Segment[]}[];
 }
-export interface JourneyV2Diagnostics extends AvailabilityMetrics {
+export interface JourneyV2Diagnostics extends Omit<AvailabilityMetrics,'unsupportedEvidenceCacheHits'|'providerUnsupportedResponses'> {
  /** availabilityCalls, wholeLegCalls, recoveryCalls and budgetUsed count checks, not HTTP requests. */
  plannerCandidates:number;availabilityCalls:number;wholeLegCalls:number;recoveryCalls:number;cacheHits:number;budgetLimit:number;budgetUsed:number;budgetRemaining:number;recoveryReserveInitial:number;recoveryReserveUsed:number;recoveryReserveReleased:number;availableResponses:number;racResponses:number;waitlistResponses:number;unsupportedClassResponses:number;providerErrors:number;discoveryCalls:0;trainInfoCalls:0;truncated:boolean;
 }

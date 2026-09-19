@@ -2,7 +2,8 @@ import type { AvailabilityRequest, AvailabilityResult } from '../../domain/types
 import { providerFailureCategory } from '../../domain/types/provider-failure.js';
 import type { TravelClass } from '../types/journey-segment.js';
 import type { ErrorCategory, InventoryCheck } from './types.js';
-export const requestKey = (r: AvailabilityRequest) => JSON.stringify([r.trainNumber,r.fromStationCode,r.toStationCode,r.journeyDate,r.travelClass,r.quota]);
+import {availabilityRequestKey as requestKey} from '../../utils/availability-key.js';
+export {requestKey};
 export function errorCategory(value: unknown): ErrorCategory {
   const v = value && typeof value === 'object' ? value as { failureCategory?: string; status?: number; statusCode?: number; providerState?: string } : {};
   const existing = providerFailureCategory(value);

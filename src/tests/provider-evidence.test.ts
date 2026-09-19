@@ -39,7 +39,8 @@ for(const [status,error,category] of cases)test(`HTTP ${status} / ${category} su
   const stats=[a,b][i].statistics();assert.equal(stats.unavailableResponses,0);
   assert.equal(stats.providerRateLimited,category==='RATE_LIMITED'?1:0);
  }
- const c=new AvailabilitySession(provider,1);await c.get(request);assert.equal(calls,2,'failures are not shared-cached');
+ const c=new AvailabilitySession(provider,1);await c.get(request);assert.equal(calls,category==='UNSUPPORTED_CLASS'?1:2,'only exact unsupported evidence is retained across searches');
+ assert.equal(c.statistics().unsupportedEvidenceCacheHits,category==='UNSUPPORTED_CLASS'?1:0);
 });
 for(const status of [400,401,403,429,500])test(`non-enumerable SDK status ${status} is captured before cloning`,async()=>{
  const value=Object.defineProperty({success:false,error:unsupported},'statusCode',{value:status,enumerable:false});

@@ -239,3 +239,23 @@ test('concurrency admission keeps existing limits and exposes safe counter snaps
   });
   lease.release();
 });
+
+test('unsupported reuse completion logs separate fresh evidence, cache hits and class skips without changing public diagnostics',async t=>{
+ mockSdk(t);let calls=0;
+ globalThis.fetch=async()=>{calls++;return new Response(JSON.stringify({success:false,error:'Class does not exist in this train for this train route'}),{status:400});};
+ const provider=new RailKitProvider(new AvailabilityScheduler(hardeningConfig({}))),h=harness(t,provider);
+ const first=await h.search('unsupported-first'),second=await h.search('unsupported-replay');
+ assert.equal(first.status,200);assert.equal(second.status,200);assert.equal(calls,1);
+ const completions=h.logs.filter(log=>log.event==='journey_v2_search_completed');assert.equal(completions.length,2);
+ assert.equal(completions[0].actualSdkInvocations,1);assert.equal(completions[0].providerUnsupportedResponses,1);assert.equal(completions[0].unsupportedEvidenceCacheHits,0);
+ assert.equal(completions[1].actualSdkInvocations,0);assert.equal(completions[1].providerUnsupportedResponses,0);assert.equal(completions[1].unsupportedEvidenceCacheHits,1);
+ for(const log of completions){assert.equal(log.attemptedAvailabilityChecks,1);assert.equal(log.unsupportedClassSkips,0);assert.equal(log.sharedCacheHits,0);}
+ for(const reply of [first,second]){
+  const body=JSON.parse(reply.body);assert.equal(body.diagnostics.unsupportedClassResponses,1);
+  assert.equal(body.diagnostics.unsupportedEvidenceCacheHits,undefined);assert.equal(body.diagnostics.providerUnsupportedResponses,undefined);
+  assert.doesNotMatch(reply.body,/transportEvidence|Class does not exist|offline-test-placeholder/);
+ }
+ delete process.env.RAILKIT_API_KEY;const rejected=await h.search('unsupported-rejected');assert.equal(rejected.status,503);
+ const log=h.logs.find(log=>log.event==='journey_v2_search_rejected');assert.ok(log);
+ assert.equal(log.unsupportedEvidenceCacheHits,0);assert.equal(log.providerUnsupportedResponses,0);
+});
