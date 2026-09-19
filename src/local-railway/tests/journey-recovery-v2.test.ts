@@ -1,3 +1,4 @@
+import {pathToFileURL} from 'node:url';
 import test, {type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import { RailwayDatabase } from '../database.js';
@@ -66,7 +67,7 @@ test('journey Planner V2 service is offline with no discovery or info access',as
 test('journey CLI requires fake mode and runs keyless with networking denied',async t=>{
   const {mkdtempSync,rmSync,readFileSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join,resolve}=await import('node:path');const {spawnSync}=await import('node:child_process');
   const dir=mkdtempSync(join(tmpdir(),'journey-cli-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const db=join(dir,'railway.sqlite');
-  const run=(args:string[])=>spawnSync(process.execPath,['--import',resolve('src/local-railway/tests/network-denied.mjs'),'--import','tsx',...args],{encoding:'utf8',env:{PATH:process.env.PATH,HOME:process.env.HOME}});
+  const run=(args:string[])=>spawnSync(process.execPath,['--import',pathToFileURL(resolve('src/local-railway/tests/network-denied.mjs')).href,'--import','tsx',...args],{encoding:'utf8',env:{PATH:process.env.PATH,HOME:process.env.HOME}});
   const imported=run(['src/local-railway/cli.ts','import','--trains','src/local-railway/tests/fixtures/trains.csv','--stops','src/local-railway/tests/fixtures/stops.csv','--db',db]);assert.equal(imported.status,0,imported.stderr);
   const args=['src/journey/availability/journey/cli.ts','AAA','EEE',date,'--db',db];assert.notEqual(run(args).status,0);assert.notEqual(run([...args,'--live']).status,0);
   const result=run([...args,'--fake','--json']);assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(result.stdout).inventoryMode,'FAKE_OFFLINE');

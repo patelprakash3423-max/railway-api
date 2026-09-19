@@ -1,3 +1,4 @@
+import {pathToFileURL} from 'node:url';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -81,8 +82,8 @@ test('idempotent replacement and rollback after SQL insert failure', t => {
   assert.throws(() => db.replace(bad), /FOREIGN KEY/); assert.deepEqual(db.metadata(), before); assert.ok(db.station('AAA'));
 });
 test('SQLite persists across close/reopen', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'railway-db-')); t.after(() => rmSync(dir,{recursive:true,force:true})); const path = join(dir,'railway.sqlite');
-  const db = new RailwayDatabase(path); importRailway(db, options); db.close(); const reader = new RailwayDatabase(path,true); t.after(() => reader.close());
+  const dir = mkdtempSync(join(tmpdir(), 'railway-db-')); const path = join(dir,'railway.sqlite');
+  const db = new RailwayDatabase(path); importRailway(db, options); db.close(); const reader = new RailwayDatabase(path,true); t.after(() => {reader.close();rmSync(dir,{recursive:true,force:true});});
   assert.equal(reader.metadata().trainCount, 15); assert.ok(new LocalJourneyPlanner(reader).search(request).journeys.length);
 });
 test('direct forward order, weekday rejection, overnight arrival and schedule-only model', t => {
@@ -164,7 +165,7 @@ test('CLI import and planning work with no provider env and network denied', t =
   const dir=mkdtempSync(join(tmpdir(),'railway-cli-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const db=join(dir,'railway.sqlite');
   const guard=join(dir,'guard.mjs');writeFileSync(guard,`import http from 'node:http';import https from 'node:https';import net from 'node:net';const deny=()=>{throw Error('Network forbidden in local POC test')};globalThis.fetch=deny;http.request=deny;http.get=deny;https.request=deny;https.get=deny;net.Socket.prototype.connect=deny;`);
   const env={PATH:process.env.PATH!,HOME:dir};
-  const run=(args:string[])=>{const p=spawnSync(process.execPath,['--import',guard,'--import','tsx','src/local-railway/cli.ts',...args],{env,encoding:'utf8'});assert.equal(p.status,0,p.stderr);return p.stdout;};
+  const run=(args:string[])=>{const p=spawnSync(process.execPath,['--import',pathToFileURL(guard).href,'--import','tsx','src/local-railway/cli.ts',...args],{env,encoding:'utf8'});assert.equal(p.status,0,p.stderr);return p.stdout;};
   run(['import','--trains',options.trains,'--stops',options.stops,'--db',db,'--label','SYNTHETIC_TEST_FIXTURE']);
   const result=JSON.parse(run(['plan','AAA','DDD','18-09-2026','--db',db,'--json']));assert.ok(result.journeys.length);assert.equal(result.kind,'SCHEDULED_CANDIDATES_ONLY');
 });
@@ -242,10 +243,10 @@ test('explicit whole-train exclusion is recorded, never silently truncates a rou
   assert.throws(()=>readDataset({...input,excludedTrains:[{number:'29001',reason:''}]}),/exclusion reason/);
 });
 test('schema v1 data can be read and migrates without deleting the existing dataset', t => {
-  const dir=mkdtempSync(join(tmpdir(),'railway-migration-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const path=join(dir,'old.sqlite');
+  const dir=mkdtempSync(join(tmpdir(),'railway-migration-'));const path=join(dir,'old.sqlite');
   const db=new RailwayDatabase(path);db.replace(dataset());db.db.exec('ALTER TABLE train_stops DROP COLUMN arrival_day_offset; PRAGMA user_version=1;');db.close();
   const oldReader=new RailwayDatabase(path,true);assert.ok(new LocalJourneyPlanner(oldReader).search(request).journeys.length);oldReader.close();
-  const migrated=new RailwayDatabase(path);t.after(()=>migrated.close());assert.equal(migrated.metadata().trainCount,15);assert.equal(migrated.db.prepare('PRAGMA user_version').get()?.user_version,2);assert.ok(new LocalJourneyPlanner(migrated).search(request).journeys.length);
+  const migrated=new RailwayDatabase(path);t.after(()=>{migrated.close();rmSync(dir,{recursive:true,force:true});});assert.equal(migrated.metadata().trainCount,15);assert.equal(migrated.db.prepare('PRAGMA user_version').get()?.user_version,2);assert.ok(new LocalJourneyPlanner(migrated).search(request).journeys.length);
 });
 
 test('same-day halt mismatch is persisted as an aggregate and replaces atomically', t => {

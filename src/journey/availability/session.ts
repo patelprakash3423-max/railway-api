@@ -1,5 +1,5 @@
 import {ProviderConfigurationError} from '../../application/errors.js';
-import {emptyAvailabilityMetrics,observeAvailabilitySdk,type AvailabilityMetrics} from '../../providers/availability-observation.js';
+import {emptyAvailabilityMetrics,observeAvailabilitySdk,observeAvailabilityMetrics,type AvailabilityMetrics} from '../../providers/availability-observation.js';
 import type { AvailabilityRequest } from '../../domain/types/availability.js';
 import { SearchBudget } from '../utils/search-budget.js';
 import type { TravelClass } from '../types/journey-segment.js';
@@ -56,17 +56,19 @@ export class AvailabilitySession {
     // Defer invocation one microtask so the in-flight key exists even if a provider throws.
     const task=Promise.resolve().then(async()=>{
       let result:InventoryCheck;
-      try{result=normalizeInventory(r,await observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;},()=>this.provider.getAvailability({...r})));}catch(error){
+      try{result=normalizeInventory(r,await observeAvailabilityMetrics((key,amount)=>{this.counts[key]+=amount;},()=>observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;},()=>this.provider.getAvailability({...r}))));}catch(error){
         if (error instanceof ProviderConfigurationError) {
           this.counts.localConfigurationFailures++;
           this.configurationFailure = error;
           this.pending.delete(key);
           throw error;
         }
+        if(error&&typeof error==='object'&&((error as {code?:string}).code==='PROVIDER_TIMEOUT'||(error as {name?:string}).name==='TimeoutError'))this.counts.providerTimeouts++;
         const category=errorCategory(error);
         const explicit=error&&typeof error==='object'&&(error as {failureCategory?:string}).failureCategory==='UNSUPPORTED_CLASS';
         result={travelClass:c,status:'PROVIDER_ERROR',errorCategory:category,...(category==='UNSUPPORTED_CLASS'&&!explicit?{unsupportedScope:'EXACT_REQUEST' as const}:{})};
       }
+      if(result.errorCategory==='RATE_LIMITED')this.counts.providerRateLimited++;
       if(['AVAILABLE','RAC','WAITLIST','UNAVAILABLE'].includes(result.status))this.counts.providerSuccesses++;
       if(result.errorCategory==='UNSUPPORTED_CLASS')result={...result,status:'UNSUPPORTED_CLASS'};
       this.cache.set(key,result);

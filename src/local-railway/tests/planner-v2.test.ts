@@ -1,3 +1,4 @@
+import {pathToFileURL} from 'node:url';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
@@ -131,7 +132,7 @@ test('V2 CLI works with network denied and has no runtime provider dependencies'
   const dir=mkdtempSync(join(tmpdir(),'v2-cli-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
   const db=join(dir,'railway.sqlite'),guard=resolve('src/local-railway/tests/network-denied.mjs');
   const env={PATH:process.env.PATH,HOME:process.env.HOME};
-  const run=(args:string[])=>{const p=spawnSync(process.execPath,['--import',guard,'--import','tsx',...args],{env,encoding:'utf8'});assert.equal(p.status,0,p.stderr);return p.stdout;};
+  const run=(args:string[])=>{const p=spawnSync(process.execPath,['--import',pathToFileURL(guard).href,'--import','tsx',...args],{env,encoding:'utf8'});assert.equal(p.status,0,p.stderr);return p.stdout;};
   run(['src/local-railway/cli.ts','import','--trains','src/local-railway/tests/fixtures/trains.csv','--stops','src/local-railway/tests/fixtures/stops.csv','--db',db]);
   const r=JSON.parse(run(['src/local-railway/planner/v2/cli.ts','AAA','DDD','18-09-2026','--db',db,'--json']));assert.equal(r.plannerVersion,2);assert.ok(r.journeys.length);
   const visited=new Set<string>();

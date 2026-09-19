@@ -1,4 +1,4 @@
-import {clientIdentity} from './search-protection.js';
+import {resolveClientIdentity} from './client-identity.js';
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { JourneySearchService } from '../application/journey-search-service.js';
@@ -28,8 +28,11 @@ export function createHttpHandler(service: Pick<JourneySearchService, 'search'>,
     const path = (request.url ?? '/').split('?')[0];
     try {
       const body = request.method === 'POST' && (path === '/api/v1/journeys/search'||path === '/api/journeys/v2/search') ? await readBody(request.iterator({ destroyOnReturn: false })) : undefined;
+      const identity=resolveClientIdentity(request.socket.remoteAddress,
+        request.headers['x-forwarded-for']??request.headers.forwarded??request.headers['x-real-ip'],
+        options.clientIdentityMode);
       const result = await route({ method: request.method ?? '', path, body, requestId,
-        contentType: request.headers['content-type'], origin: request.headers.origin,signal:controller.signal,clientId:clientIdentity(request.socket.remoteAddress,request.headers['x-forwarded-for']) });
+        contentType: request.headers['content-type'], origin: request.headers.origin,signal:controller.signal,clientId:identity.key,clientIdentityClass:identity.classification });
       response.writeHead(result.status, result.headers); response.end(result.body);
     } catch (error: unknown) {
       const failure = safeError(error);

@@ -35,18 +35,18 @@ test('per-client and global concurrency reject before provider and release after
  assert.equal((await h.request('a')).status,429);assert.equal((await h.request('c')).status,429);assert.equal(h.calls(),2);
  a.abort();b.abort();await Promise.all([one,two]);
 });
-test('monthly and burst admission reserve full search budget before expensive work',async t=>{
- for(const patch of [{monthly:29},{burst:29}]){const h=setup(t,undefined,patch);assert.equal((await h.request()).status,429);assert.equal(h.calls(),0);}
+test('search admission does not reserve a full availability budget',async t=>{
+ for(const patch of [{monthly:29},{burst:29}]){const h=setup(t,undefined,patch);assert.equal((await h.request()).status,200);assert.equal(h.calls(),1);}
 });
-test('quota counts actual calls and releases unused reservations; process-local window expiry',()=>{
+test('quota counts actual calls without reservations; process-local window expiry',()=>{
  let time=now;const guard=new SearchProtection({...config(),monthly:31,burst:31,rateMax:1,rateWindowMs:100},()=>time);
  const lease=guard.acquire('a',30);lease.consume();lease.release();assert.throws(()=>guard.acquire('a',30));
- time+=101;const b=guard.acquire('a',30);b.consume();b.release();assert.throws(()=>guard.acquire('b',30));
+ time+=101;const b=guard.acquire('a',30);b.consume();b.release();guard.acquire('b',30).release();assert.equal(guard.snapshot('b').monthlyUsed,2);
  time=Date.UTC(2026,9,1);guard.acquire('b',30).release();
 });
 test('proxy headers cannot create unbounded client identities',()=>{
  assert.equal(clientIdentity('1.2.3.4','forged-a'),clientIdentity('1.2.3.5','forged-b'));
- assert.equal(clientIdentity('1.2.3.4',undefined),'1.2.3.4');
+ assert.equal(clientIdentity('1.2.3.4',undefined,'DIRECT_PEER'),'1.2.3.4');
 });
 for(const patch of [{date:'17-09-2026'},{date:'18-09-2099'},{mode:['STANDARD']}])test(`invalid booking request ${JSON.stringify(patch)} has zero provider calls`,async t=>{
  const h=setup(t);assert.equal((await h.request('a',{...input,...patch})).status,400);assert.equal(h.calls(),0);

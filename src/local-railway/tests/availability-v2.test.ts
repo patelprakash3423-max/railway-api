@@ -1,3 +1,4 @@
+import {pathToFileURL} from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
@@ -109,7 +110,7 @@ test('V2 inventory rejects invalid classes quota and configuration before calls'
 
 test('V2 inventory CLI is explicitly fake, keyless, offline and availability-only',t=>{
   const dir=mkdtempSync(join(tmpdir(),'v2-inventory-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const db=join(dir,'railway.sqlite');
-  const run=(args:string[])=>spawnSync(process.execPath,['--import',resolve('src/local-railway/tests/network-denied.mjs'),'--import','tsx',...args],{encoding:'utf8',env:{PATH:process.env.PATH,HOME:process.env.HOME}});
+  const run=(args:string[])=>spawnSync(process.execPath,['--import',pathToFileURL(resolve('src/local-railway/tests/network-denied.mjs')).href,'--import','tsx',...args],{encoding:'utf8',env:{PATH:process.env.PATH,HOME:process.env.HOME}});
   const imported=run(['src/local-railway/cli.ts','import','--trains','src/local-railway/tests/fixtures/trains.csv','--stops','src/local-railway/tests/fixtures/stops.csv','--db',db]);assert.equal(imported.status,0,imported.stderr);
   const p=run(['src/journey/availability/cli.ts','AAA','DDD',date,'--fake','--json','--db',db]);assert.equal(p.status,0,p.stderr);const r=JSON.parse(p.stdout);assert.equal(r.inventoryMode,'FAKE_OFFLINE');assert.ok(r.plannerDiagnostics);assert.ok(r.diagnostics.plannerCandidatesReceived>0);assert.ok(r.diagnostics.availabilityRequestsUsed<=30);
   assert.notEqual(run(['src/journey/availability/cli.ts','AAA','DDD',date,'--db',db]).status,0);

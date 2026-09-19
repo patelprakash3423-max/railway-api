@@ -1,3 +1,4 @@
+import {pathToFileURL} from 'node:url';
 import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
@@ -99,7 +100,7 @@ test('V2 recovery uses class metadata and widens classes without provider info',
 
 test('V2 recovery CLI is keyless, fake-only and free of discovery/info calls',t=>{
   const dir=mkdtempSync(join(tmpdir(),'recovery-cli-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const db=join(dir,'railway.sqlite');
-  const run=(args:string[])=>spawnSync(process.execPath,['--import',resolve('src/local-railway/tests/network-denied.mjs'),'--import','tsx',...args],{encoding:'utf8',env:{PATH:process.env.PATH,HOME:process.env.HOME}});
+  const run=(args:string[])=>spawnSync(process.execPath,['--import',pathToFileURL(resolve('src/local-railway/tests/network-denied.mjs')).href,'--import','tsx',...args],{encoding:'utf8',env:{PATH:process.env.PATH,HOME:process.env.HOME}});
   const imported=run(['src/local-railway/cli.ts','import','--trains','src/local-railway/tests/fixtures/trains.csv','--stops','src/local-railway/tests/fixtures/stops.csv','--db',db]);assert.equal(imported.status,0,imported.stderr);
   const args=['src/journey/availability/recovery/cli.ts','10012','BBB','EEE',date,'--db',db];
   assert.notEqual(run(args).status,0);const p=run([...args,'--fake','--json']);assert.equal(p.status,0,p.stderr);const r=JSON.parse(p.stdout);assert.equal(r.inventoryMode,'FAKE_OFFLINE');assert.equal(r.best.recoveryStatus,'FULL_RESERVED_SPLIT_CLASS');

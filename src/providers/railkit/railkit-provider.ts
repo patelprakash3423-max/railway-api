@@ -3,14 +3,17 @@ import { normalizeTrainSearch, validateTrainSearch, discoveryFailure } from './r
 import type { RailwayProvider } from '../railway-provider.js';
 import type { TrainDetails } from '../../domain/types/train.js';
 import type { AvailabilityRequest, AvailabilityResult } from '../../domain/types/availability.js';
-import { rawTrainInfo, rawAvailability, rawTrainsBetween } from './railkit-client.js';
+import { rawTrainInfo, scheduledAvailability, rawTrainsBetween } from './railkit-client.js';
 import { normalizeTrainInfo, normalizeAvailability, availabilityFailure } from './railkit-normalizers.js';
 import { providerError } from '../../utils/errors.js';
 import { validateAvailabilityRequest } from '../../utils/availability-input.js';
 import {configureRailKit} from '../../config/railkit.js';
 import {ProviderConfigurationError} from '../../application/errors.js';
 
+import {processAvailabilityScheduler,type AvailabilityScheduler} from './availability-scheduler.js';
+
 export class RailKitProvider implements RailwayProvider {
+  constructor(readonly availabilityScheduler:AvailabilityScheduler=processAvailabilityScheduler()){}
   readonly quotaAccounting = 'SDK_INVOCATION' as const;
   assertConfigured(): void { configureRailKit(); }
   async searchTrainsBetweenStations(request: TrainSearchRequest): Promise<TrainSearchResult> {
@@ -31,7 +34,7 @@ export class RailKitProvider implements RailwayProvider {
     const input = { ...request };
     try {
       validateAvailabilityRequest(input);
-      const result = await rawAvailability(input.trainNumber, input.fromStationCode,
+      const result = await scheduledAvailability(this.availabilityScheduler, input.trainNumber, input.fromStationCode,
         input.toStationCode, input.journeyDate, input.travelClass, input.quota);
       return normalizeAvailability(result, input);
     } catch (error: unknown) {
