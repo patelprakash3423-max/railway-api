@@ -29,4 +29,5 @@ export interface AvailabilityResult {
   days: AvailabilityDay[];
   failureCategory?: import('./provider-failure.js').ProviderFailureCategory;
   providerMessage?: string;
+  transportEvidence?: import('./provider-failure.js').ProviderTransportEvidence;
 }

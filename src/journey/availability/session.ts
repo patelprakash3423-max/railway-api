@@ -56,23 +56,23 @@ export class AvailabilitySession {
     // Defer invocation one microtask so the in-flight key exists even if a provider throws.
     const task=Promise.resolve().then(async()=>{
       let result:InventoryCheck;
-      try{result=normalizeInventory(r,await observeAvailabilityMetrics((key,amount)=>{this.counts[key]+=amount;},()=>observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;},()=>this.provider.getAvailability({...r}))));}catch(error){
+      let timeoutObserved=false;
+      try{result=normalizeInventory(r,await observeAvailabilityMetrics((key,amount)=>{this.counts[key]+=amount;if(key==='providerTimeouts')timeoutObserved=true;},()=>observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;},()=>this.provider.getAvailability({...r}))));}catch(error){
         if (error instanceof ProviderConfigurationError) {
           this.counts.localConfigurationFailures++;
           this.configurationFailure = error;
           this.pending.delete(key);
           throw error;
         }
-        if(error&&typeof error==='object'&&((error as {code?:string}).code==='PROVIDER_TIMEOUT'||(error as {name?:string}).name==='TimeoutError'))this.counts.providerTimeouts++;
         const category=errorCategory(error);
-        const explicit=error&&typeof error==='object'&&(error as {failureCategory?:string}).failureCategory==='UNSUPPORTED_CLASS';
-        result={travelClass:c,status:'PROVIDER_ERROR',errorCategory:category,...(category==='UNSUPPORTED_CLASS'&&!explicit?{unsupportedScope:'EXACT_REQUEST' as const}:{})};
+        result={travelClass:c,status:'PROVIDER_ERROR',errorCategory:category,...(category==='UNSUPPORTED_CLASS'?{unsupportedScope:'EXACT_REQUEST' as const}:{})};
       }
+      if(result.errorCategory==='PROVIDER_TIMEOUT'&&!timeoutObserved)this.counts.providerTimeouts++;
       if(result.errorCategory==='RATE_LIMITED')this.counts.providerRateLimited++;
       if(['AVAILABLE','RAC','WAITLIST','UNAVAILABLE'].includes(result.status))this.counts.providerSuccesses++;
       if(result.errorCategory==='UNSUPPORTED_CLASS')result={...result,status:'UNSUPPORTED_CLASS'};
       this.cache.set(key,result);
-      if(result.errorCategory==='UNSUPPORTED_CLASS'&&result.unsupportedScope!=='EXACT_REQUEST'){const known=this.unsupported.get(r.trainNumber)??new Set<TravelClass>();known.add(c);this.unsupported.set(r.trainNumber,known);}
+      // A provider response describes this route only; it cannot teach train-wide class support.
       if(result.status==='AVAILABLE')this.counts.availableResponses++;else if(result.status==='RAC')this.counts.racResponses++;else if(result.status==='WAITLIST')this.counts.waitlistResponses++;else if(result.status==='UNAVAILABLE')this.counts.unavailableResponses++;else if(result.errorCategory==='UNSUPPORTED_CLASS')this.counts.unsupportedClassResponses++;else{this.counts.providerErrors++;const category=result.errorCategory??'UNKNOWN_PROVIDER_ERROR';this.counts.providerErrorCategories[category]=(this.counts.providerErrorCategories[category]??0)+1;}
       this.pending.delete(key);return result;
     });

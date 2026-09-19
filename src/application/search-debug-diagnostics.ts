@@ -1,4 +1,4 @@
-import { providerFailureCategory } from '../domain/types/provider-failure.js';
+import { providerFailureCategory, providerFailureCategories, type ProviderFailureCategory } from '../domain/types/provider-failure.js';
 import type { AvailabilityRequest, AvailabilityResult } from '../domain/types/availability.js';
 import type { TrainSearchRequest, TrainSearchResult } from '../domain/types/train-search.js';
 import type { TrainDetails } from '../domain/types/train.js';
@@ -10,7 +10,7 @@ export type SearchCompletionReason = 'COMPLETED_NORMAL'|'RESULT_TARGET_REACHED'|
 /** Observes actual calls only. Cache reads never pass through this collector. */
 export class SearchDiagnosticObserver {
  readonly outcomes = { available:0,rac:0,waitlist:0,notAvailable:0,providerUnavailable:0,providerError:0,unclassified:0 };
- readonly providerFailures = { RATE_LIMITED:0,BOOKING_UNSUPPORTED:0,INVALID_PROVIDER_RESPONSE:0,UNKNOWN_PROVIDER_ERROR:0 };
+ readonly providerFailures = Object.fromEntries(providerFailureCategories.map(category=>[category,0])) as Record<ProviderFailureCategory,number>;
  observeFailure(value:unknown){this.providerFailures[providerFailureCategory(value)]++;}
  readonly discovery = { discoveryCalls:0,trainsReturned:0,exactEndpointTrains:0 };
  private trains=new Set<string>();private stations=new Set<string>();

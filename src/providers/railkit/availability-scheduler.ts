@@ -4,11 +4,12 @@ import {PublicError} from '../../application/errors.js';
 import {ProviderQuota} from '../provider-quota.js';
 import {availabilityMetric} from '../availability-observation.js';
 import {availabilitySignal,availabilityTimeoutMs,inAvailabilityScope} from './availability-abort.js';
+import {providerTransportEvidence,type ProviderFailureCategory} from '../../domain/types/provider-failure.js';
 import {normalizeAvailability} from './railkit-normalizers.js';
 import type {AvailabilityRequest} from '../../domain/types/availability.js';
 
 type Waiter={signal?:AbortSignal;run:ReturnType<typeof AsyncLocalStorage.snapshot>;resolve:(v:unknown)=>void;reject:(e:unknown)=>void;cleanup:()=>void;queuedAt:number;waited:boolean};
-type Entry={timeoutMs:number;httpStatus?:number;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
+type Entry={timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
 /** One default instance covers every raw/normalized availability SDK entry point.
  * Queue owners rotate after each start. Running calls are never preempted.
  * Aborted/time-out SDKs retain their slots until the SDK promise actually settles:
@@ -75,18 +76,30 @@ export class AvailabilityScheduler {
    const task=first.run(()=>inAvailabilityScope(entry.controller.signal,async()=>{
     entry.controller.signal.throwIfAborted();
     return entry.invoke();
-   },{onResponse:status=>{if(status>=400)entry.httpStatus=status;}}));
+   },{onResponse:status=>{entry.httpStatus=status;},onFailure:category=>{entry.transportFailure=category;}}));
    void task.then(value=>{
     if(entry.controller.signal.aborted)return;
     // RailKit can return a success-shaped body even for HTTP 429/5xx.
     // Preserve structural transport evidence without guessing from error text.
-    if(entry.httpStatus){this.settle(entry,undefined,this.httpFailure(entry.httpStatus));return;}
+    const evidence=providerTransportEvidence(value,entry.httpStatus);
+    if(entry.transportFailure&&!(entry.httpStatus&&entry.httpStatus>=400)){
+     evidence.failureCategory=entry.transportFailure;evidence.message=`Availability provider failure: ${entry.transportFailure}.`;
+    }
+    const failed=entry.transportFailure||(evidence.statusCode!==undefined&&evidence.statusCode>=400)||
+     (value&&typeof value==='object'&&'success' in value&&value.success===false);
+    // Materialize evidence BEFORE structuredClone/spread/serialization can lose it.
+    if(failed)value={success:false,error:evidence.message,transportEvidence:evidence};
     const normalized=normalizeAvailability(value,entry.request);
+    if(normalized.providerState!=='SUCCESS'){
+     const transportEvidence=providerTransportEvidence(normalized,entry.httpStatus);
+     value={success:false,error:transportEvidence.message,transportEvidence};
+    }
     const matching=normalized.days.filter(d=>d.date===entry.request.journeyDate);
     // Only validated evidence for the exact date is reusable. NOT_AVAILABLE is
     // explicit inventory; unsupported booking/class, errors and empty days aren't.
     if(normalized.providerState==='SUCCESS'&&matching.length===1&&
-       ['AVAILABLE','RAC','WAITLIST','NOT_AVAILABLE'].includes(matching[0].state)){
+       ['AVAILABLE','RAC','WAITLIST','NOT_AVAILABLE'].includes(matching[0].state)&&
+       !(matching[0].canBook===false&&['AVAILABLE','RAC'].includes(matching[0].state))){
      const time=this.now();
      for(const [key,cached]of this.cache)if(cached.expires<=time)this.cache.delete(key);
      this.cache.delete(entry.key);
@@ -94,12 +107,11 @@ export class AvailabilityScheduler {
      this.cache.set(entry.key,{expires:time+this.config.providerCacheTtlMs,value:structuredClone(value)});
     }
     this.settle(entry,value);
-   },error=>this.settle(entry,undefined,entry.httpStatus?this.httpFailure(entry.httpStatus):error)).finally(()=>{
+   },error=>this.settle(entry,undefined,{transportEvidence:providerTransportEvidence(entry.transportFailure?{failureCategory:entry.transportFailure}:error,entry.httpStatus)})).finally(()=>{
     clearTimeout(entry.timer);this.remove(entry);this.active--;this.drain();
    });
   }
  }
- private httpFailure(status:number){return Object.assign(new Error('Availability provider request failed.'),{status});}
  private settle(entry:Entry,value?:unknown,error?:unknown){
   this.remove(entry);
   for(const w of entry.waiters){this.finishWait(w);if(error instanceof PublicError&&error.code==='PROVIDER_TIMEOUT')w.run(()=>availabilityMetric('providerTimeouts'));if(error!==undefined)w.reject(error);else w.resolve(structuredClone(value));}

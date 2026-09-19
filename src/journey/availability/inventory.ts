@@ -23,6 +23,7 @@ export function normalizeInventory(request: AvailabilityRequest, result: Availab
   const days = Array.isArray(result.days) ? result.days.filter(d => d.date === request.journeyDate) : [];
   if (!result.request || requestKey(result.request) !== requestKey(request) || days.length !== 1 || !['AVAILABLE','RAC','WAITLIST','NOT_AVAILABLE'].includes(days[0].state)) return { ...base, status: 'PROVIDER_ERROR', errorCategory: 'INVALID_PROVIDER_RESPONSE' };
   const day = days[0];
+  if((day.state==='AVAILABLE'||day.state==='RAC')&&day.canBook===false)return {...base,status:'PROVIDER_ERROR',errorCategory:'BOOKING_UNSUPPORTED'};
   const fare = result.fare?.currency === 'INR' && Number.isFinite(result.fare.totalFare) && result.fare.totalFare >= 0 ? result.fare : undefined;
   return { ...base, status: day.state === 'NOT_AVAILABLE' ? 'UNAVAILABLE' : day.state, availabilityText: day.availabilityText, fare };
 }

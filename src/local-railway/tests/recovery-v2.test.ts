@@ -116,3 +116,11 @@ test('V2 recovery cached unavailable whole leg leaves remaining shared budget fo
   for(const travelClass of ['SL','3A'])await session.get({trainNumber:input.trainNumber,fromStationCode:'A',toStationCode:'D',journeyDate:date,travelClass,quota:'GN'});
   const r=await recoverSingleTrainLeg(db,session,input);assert.equal(r.best.recoveryStatus,'FULL_RESERVED_SPLIT_CLASS');assert.equal(r.diagnostics.availabilityCacheHits,2);assert.equal(r.diagnostics.availabilityRequestsUsed,3);assert.equal(session.statistics().availabilityRequestsUsed,5);assert.equal(session.remaining,3);
 });
+
+for(const state of ['AVAILABLE','RAC'] as const)test(`V2 recovery ${state} canBook=false cannot cover any interval`,async t=>{
+ const {db,input}=setup(t);
+ const p={getAvailability:async(r:AvailabilityRequest):Promise<AvailabilityResult>=>({request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state,canBook:false}]})};
+ const session=new AvailabilitySession(p,100),result=await recoverSingleTrainLeg(db,session,input);
+ assert.equal(result.best.reservedCoverageRatio,0);assert.equal(result.best.recoveryStatus,'INVENTORY_CHECK_INCOMPLETE');
+ assert.equal(result.solutions.length,0);assert.equal(session.statistics().unavailableResponses,0);
+});

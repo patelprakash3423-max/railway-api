@@ -12,7 +12,7 @@ export type AvailabilityProvider = Pick<RailwayProvider, 'getAvailability'> & {
   quotaAccounting?: 'SDK_INVOCATION';
 };
 export type InventoryStatus = 'AVAILABLE' | 'RAC' | 'WAITLIST' | 'UNAVAILABLE' | 'UNSUPPORTED_CLASS' | 'PROVIDER_ERROR';
-export type ErrorCategory = 'RATE_LIMITED' | 'INVALID_REQUEST' | 'UNSUPPORTED_CLASS' | 'BOOKING_UNSUPPORTED' | 'PROVIDER_UNAVAILABLE' | 'INVALID_PROVIDER_RESPONSE' | 'UNKNOWN_PROVIDER_ERROR';
+export type ErrorCategory = import('../../domain/types/provider-failure.js').ProviderFailureCategory | 'PROVIDER_UNAVAILABLE';
 export interface InventoryCheck { unsupportedScope?: 'EXACT_REQUEST'; travelClass: TravelClass; status: InventoryStatus; availabilityText?: string; fare?: Fare; errorCategory?: ErrorCategory; rawDetails?: AvailabilityResult }
 export type ValidationStatus = 'FULLY_RESERVED_USABLE' | 'SCHEDULED_BUT_NOT_FULLY_AVAILABLE' | 'INVENTORY_CHECK_INCOMPLETE';
 export interface ValidatedLeg { trainNumber: string; fromStation: string; toStation: string; boardingDate: string; departureDateTime: string; arrivalDateTime: string; distanceKm: number; selectedClass: TravelClass | null; quota: 'GN'; availabilityStatus: InventoryStatus | null; availabilityText?: string; fare?: Fare; checks: InventoryCheck[] }

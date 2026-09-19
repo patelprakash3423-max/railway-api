@@ -2,7 +2,8 @@ import type { TrainDetails } from '../../domain/types/train.js';
 import type { TrainStop } from '../../domain/types/station.js';
 import type { Fare } from '../../domain/types/fare.js';
 import type { AvailabilityDay, AvailabilityRequest, AvailabilityResult } from '../../domain/types/availability.js';
-import { ProviderError, providerError, redact } from '../../utils/errors.js';
+import {providerTransportEvidence} from '../../domain/types/provider-failure.js';
+import { ProviderError, redact } from '../../utils/errors.js';
 
 const inventoryMessage = 'Sorry, this train is not available for booking for this date';
 function invalid(field: string): never {
@@ -89,16 +90,12 @@ function normalizeDay(value: unknown): AvailabilityDay {
   const raw = record(value, 'availability day');
   const state = text(raw.status, 'status').trim().toUpperCase();
   if (state !== 'AVAILABLE' && state !== 'RAC' && state !== 'WAITLIST' && state !== 'NOT_AVAILABLE') invalid('unknown availability status');
-  const date = text(raw.date, 'date');
-  const match = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(date);
-  if (!match) invalid('availability date');
-  const [day, month, year] = match.slice(1).map(Number);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
-  if (parsed.getUTCDate() !== day || parsed.getUTCMonth() !== month - 1 || parsed.getUTCFullYear() !== year) invalid('availability date');
+  const date = availabilityDate(raw.date);
   const result: AvailabilityDay = {
-    date: `${String(day).padStart(2, '0')}-${String(month).padStart(2, '0')}-${year}`,
+    date,
     state, availabilityText: optionalText(raw.availabilityText), rawStatus: optionalText(raw.rawStatus),
   };
+  if(raw.canBook!==undefined&&typeof raw.canBook!=='boolean')invalid('canBook');
   if (typeof raw.canBook === 'boolean') result.canBook = raw.canBook;
   if (raw.predictionPercentage !== undefined) {
     const prediction = number(raw.predictionPercentage, 'prediction');
@@ -126,20 +123,45 @@ function normalizeDay(value: unknown): AvailabilityDay {
   }
   return result;
 }
+/** Only explicit dates/codes are compared; station names and timetable endpoints are not aliases. */
+function availabilityDate(value: unknown): string {
+ const date=text(value,'date').trim();
+ const iso=/^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+ const match=/^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(date);
+ if(!iso&&!match)invalid('availability date');
+ const [day,month,year]=iso?[Number(iso[3]),Number(iso[2]),Number(iso[1])]:match!.slice(1).map(Number);
+ const parsed=new Date(Date.UTC(year,month-1,day));
+ if(parsed.getUTCDate()!==day||parsed.getUTCMonth()!==month-1||parsed.getUTCFullYear()!==year)invalid('availability date');
+ return `${String(day).padStart(2,'0')}-${String(month).padStart(2,'0')}-${year}`;
+}
+function validateIdentity(data: Record<string,unknown>, train: Record<string,unknown>|undefined, request: AvailabilityRequest): void {
+ const code=(value:unknown)=>text(value,'availability identity').trim().toUpperCase();
+ for(const [field,expected] of [['trainNo',request.trainNumber],['from',request.fromStationCode],['to',request.toStationCode],['travelClass',request.travelClass],['quota',request.quota]] as const){
+  if(train?.[field]!==undefined&&code(train[field])!==code(expected))invalid(`conflicting ${field}`);
+ }
+ // A daily availability array may legitimately include adjacent dates. An explicit
+ // request-level journeyDate, when supplied, must identify the requested journey.
+ for(const source of [data,train])if(source?.journeyDate!==undefined&&availabilityDate(source.journeyDate)!==availabilityDate(request.journeyDate))invalid('conflicting journeyDate');
+}
 export function availabilityFailure(request: AvailabilityRequest, error: unknown): AvailabilityResult {
-  const failure = providerError(error);
-  return { request: { ...request }, provider: 'railkit', providerState: failure.providerState, days: [], failureCategory: failure.failureCategory, providerMessage: failure.message };
+ const evidence=providerTransportEvidence(error);
+ return {request:{...request},provider:'railkit',providerState:evidence.failureCategory==='BOOKING_UNSUPPORTED'?'PROVIDER_UNAVAILABLE':'PROVIDER_ERROR',
+  days:[],failureCategory:evidence.failureCategory,providerMessage:evidence.message,transportEvidence:evidence};
 }
 export function normalizeAvailability(value: unknown, request: AvailabilityRequest): AvailabilityResult {
   try {
+    const evidence=providerTransportEvidence(value);
+    const envelope=record(value,'envelope');
+    if((evidence.statusCode!==undefined&&evidence.statusCode>=400)||envelope.success===false||envelope.transportEvidence!==undefined)return availabilityFailure(request,value);
     const data = payload(value);
     if (!Array.isArray(data.availability)) invalid('availability array');
     const train = data.train === undefined ? undefined : record(data.train, 'train');
+    validateIdentity(data,train,request);
     return {
       request: { ...request }, provider: 'railkit', providerState: 'SUCCESS',
       trainName: optionalText(train?.trainName),
       fare: data.fare === undefined ? undefined : normalizeFare(data.fare),
       days: data.availability.map(normalizeDay),
     };
-  } catch (error: unknown) { return availabilityFailure(request, error); }
+  } catch (error: unknown) { return availabilityFailure(request, {transportEvidence:providerTransportEvidence(error,providerTransportEvidence(value).statusCode)}); }
 }

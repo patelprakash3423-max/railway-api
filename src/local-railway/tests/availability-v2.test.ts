@@ -134,7 +134,13 @@ test('V2 inventory ALL reuses cached usable class with zero spare budget',async(
   const h=harness(r=>answer(r,r.travelClass==='3A'?'AVAILABLE':'WAITLIST'),{budgetLimit:2});const r=await h.run([candidate(),candidate()],{requestedClasses:['ALL']});
   assert.equal(h.calls.length,2);assert.equal(r.diagnostics.budgetRemaining,0);assert.equal(r.diagnostics.usableJourneysFound,2);assert.equal(r.diagnostics.availabilityCacheHits,1);
 });
-test('V2 inventory explicit unsupported class is learned across segments on same train',async()=>{
-  const h=harness(r=>{if(r.trainNumber==='30001')throw{failureCategory:'UNSUPPORTED_CLASS'};return answer(r);});
-  const r=await h.run([candidate(),candidate(['30001','30002'])]);assert.equal(h.calls.length,1);assert.equal(r.diagnostics.unsupportedClassResponses,1);assert.equal(r.diagnostics.providerErrors,0);assert.equal(r.diagnostics.providerErrorCategories.UNSUPPORTED_CLASS,undefined);assert.ok(r.journeys.every(j=>j.status==='SCHEDULED_BUT_NOT_FULLY_AVAILABLE'));
+test('V2 inventory explicit unsupported class remains scoped to the failing route',async()=>{
+  const h=harness(r=>{if(r.trainNumber==='30001'&&r.toStationCode==='ZZZ')throw{failureCategory:'UNSUPPORTED_CLASS'};return answer(r);});
+  const r=await h.run([candidate(),candidate(['30001','30002'])]);assert.equal(h.calls.length,3);assert.equal(r.diagnostics.unsupportedClassResponses,1);assert.equal(r.diagnostics.providerErrors,0);assert.equal(r.diagnostics.providerErrorCategories.UNSUPPORTED_CLASS,undefined);assert.equal(r.journeys.find(j=>j.legs.length===1)?.status,'SCHEDULED_BUT_NOT_FULLY_AVAILABLE');assert.equal(r.journeys.find(j=>j.legs.length===2)?.status,'FULLY_RESERVED_USABLE');
+});
+
+for(const state of ['AVAILABLE','RAC'] as const)test(`V2 ${state} with canBook=false stays incomplete`,async()=>{
+ const h=harness(r=>({...answer(r,state),days:[{date:r.journeyDate,state,canBook:false}]}));
+ const result=await h.run();assert.equal(result.journeys[0].status,'INVENTORY_CHECK_INCOMPLETE');
+ assert.equal(result.journeys[0].legs[0].availabilityStatus,'PROVIDER_ERROR');assert.equal(result.diagnostics.usableJourneysFound,0);assert.equal(result.diagnostics.unavailableResponses,0);
 });

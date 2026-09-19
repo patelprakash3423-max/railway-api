@@ -112,7 +112,9 @@ test('provider messages and text fields redact secrets', () => {
   try {
     assert.equal(redact('error offline-redaction-marker'), 'error [REDACTED]');
     const result = normalizeAvailability({ success: false, error: 'offline-redaction-marker' }, request);
-    assert.equal(result.providerMessage, '[REDACTED]');
+    // Availability errors now retain only allowlisted classification evidence.
+    assert.equal(result.providerMessage, 'Availability provider failure: UNKNOWN_PROVIDER_ERROR.');
+    assert.ok(!JSON.stringify(result).includes('offline-redaction-marker'));
   } finally {
     if (previous === undefined) delete process.env.RAILKIT_API_KEY;
     else process.env.RAILKIT_API_KEY = previous;
