@@ -94,6 +94,57 @@ V2 diagnostics remain opt-in through `EXPOSE_SEARCH_DIAGNOSTICS` or `ENABLE_API_
 
 Completion logs include the new counters and `availabilityCallsMeaning: BUDGETED_CHECKS`. Error responses retain `{requestId,error:{code,message}}`; configuration failures are HTTP 503 rather than HTTP 200 with unverified schedule results. Health, endpoint paths, successful result structure, CORS, and request-ID behavior are unchanged. HTTP 429/5xx transport responses are now prevented from becoming availability or cache entries even if the SDK returns a success-shaped body. Existing structural failure categories are reused; unsupported-inventory meanings are unchanged.
 
+### Per-check availability provenance (D1)
+
+With either existing diagnostics flag enabled, the configured search logger emits
+`journey_v2_availability_evidence` at debug level, correlated by `requestId`.
+It is disabled by default. Its allowlisted `evidence` object contains the checked
+`trainNumber`, `from`, `to`, `requestedDate`, `travelClass`, `quota`,
+`resultStatus`, optional recognized `availabilityText`, `canBook` (true, false,
+or `ABSENT`), exact-date row count/found flag, failure category, and source.
+These fields are internal/log-only; the public journey schema is unchanged.
+
+The six `provider*IdentityPresent` booleans cover train/from/to/class/quota and
+explicit request-level journey date. `providerIdentityValidation=VALIDATED`
+means all **present** fields passed existing comparisons; it does not verify any
+absent field. `NOT_PROVIDED` means no optional identity was supplied,
+`REJECTED` means explicit identity failed validation, and `NOT_EVALUATED`
+means identity validation was not reached. No conflicting provider values are logged.
+`matchingAvailabilityRows` counts normalized rows for the exact requested date;
+zero or multiple rows remain invalid. It is null when normalization failed before
+row selection, including identity conflicts. No adjacent-date fallback occurs.
+`canBook` and availability text refer only to a uniquely matching requested row.
+
+Sources use request-scoped observations, never global counter subtraction:
+
+- `FRESH_PROVIDER`: this check observed an actual SDK invocation.
+- `SHARED_INFLIGHT`: joined scheduler work; the initiating waiter gets the SDK attribution.
+- `SHARED_CACHE`: normal shared inventory cache.
+- `UNSUPPORTED_EVIDENCE_CACHE`: exact unsupported evidence cache.
+- `SEARCH_LOCAL_CACHE`: completed or pending reuse through the same session's `get`.
+- `NOT_OBSERVED`: no SDK/cache source was observed, e.g. an injected fake or rejection before SDK invocation.
+
+`sdkInvokedForCheck` distinguishes invocation attribution explicitly. Existing
+budgets, metrics, cache scopes/TTLs and scheduler concurrency are unchanged.
+Allocation's direct cache inspection does not emit extra events or increment counters;
+its original check is already traceable within the same request. Shared followers
+retain their own request/log context. Logger exceptions cannot fail the search.
+
+Only short recognized inventory text (e.g. `AVL 2`, `AVBL 2`, `RAC 10`,
+`WL 200`) is logged. Other strings are omitted. Bodies, headers, provider error
+messages, stacks, credentials and user IPs are not included. Existing logger redaction
+still applies. V2 forwards provider inventory text; it does not invent an AVL count.
+A reserved segment may belong to an `INVENTORY_CHECK_INCOMPLETE` journey when
+another leg is unverified; segment evidence does not imply whole-journey coverage.
+
+For the reported case, enable diagnostics for a separately authorized controlled
+search, locate its `requestId`, then filter the evidence event by
+`12565 / SV / NDLS / 18-11-2026 / SL / GN`. Compare its normalized status,
+text, identity presence, row count, canBook, and source to the returned segment.
+D1 implementation/tests use mocked responses only. These logs cannot retrospectively
+prove what the historical screenshot's provider response contained or independently
+verify IRCTC inventory; absent provider identity also remains an explicit limitation.
+
 ## Render settings
 
 - Runtime: Node

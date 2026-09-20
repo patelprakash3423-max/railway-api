@@ -1,3 +1,4 @@
+import type {ProviderIdentityEvidence} from '../../providers/availability-evidence.js';
 import type { Fare } from './fare.js';
 import type { ProviderState } from './provider.js';
 export type AvailabilityState = 'AVAILABLE' | 'RAC' | 'WAITLIST' | 'NOT_AVAILABLE' | 'PROVIDER_UNAVAILABLE' | 'PROVIDER_ERROR';
@@ -21,6 +22,8 @@ export interface AvailabilityDay {
   canBook?: boolean;
 }
 export interface AvailabilityResult {
+  /** Internal provider identity observability; never serialized into journey responses. */
+  identityEvidence?: ProviderIdentityEvidence;
   request: AvailabilityRequest;
   provider: 'railkit';
   providerState: ProviderState;

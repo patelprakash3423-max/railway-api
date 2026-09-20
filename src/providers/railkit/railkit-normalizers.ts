@@ -1,3 +1,4 @@
+import {safeIdentityEvidence,type ProviderIdentityEvidence} from '../availability-evidence.js';
 import type { TrainDetails } from '../../domain/types/train.js';
 import type { TrainStop } from '../../domain/types/station.js';
 import type { Fare } from '../../domain/types/fare.js';
@@ -149,6 +150,7 @@ export function availabilityFailure(request: AvailabilityRequest, error: unknown
   days:[],failureCategory:evidence.failureCategory,providerMessage:evidence.message,transportEvidence:evidence};
 }
 export function normalizeAvailability(value: unknown, request: AvailabilityRequest): AvailabilityResult {
+  const identity:ProviderIdentityEvidence=safeIdentityEvidence();
   try {
     const evidence=providerTransportEvidence(value);
     const envelope=record(value,'envelope');
@@ -156,12 +158,19 @@ export function normalizeAvailability(value: unknown, request: AvailabilityReque
     const data = payload(value);
     if (!Array.isArray(data.availability)) invalid('availability array');
     const train = data.train === undefined ? undefined : record(data.train, 'train');
+    Object.assign(identity,{
+      providerTrainIdentityPresent:train?.trainNo!==undefined,providerFromIdentityPresent:train?.from!==undefined,
+      providerToIdentityPresent:train?.to!==undefined,providerClassIdentityPresent:train?.travelClass!==undefined,
+      providerQuotaIdentityPresent:train?.quota!==undefined,providerJourneyDateIdentityPresent:data.journeyDate!==undefined||train?.journeyDate!==undefined,
+    });
+    identity.providerIdentityValidation='REJECTED';
     validateIdentity(data,train,request);
+    identity.providerIdentityValidation=Object.entries(identity).some(([k,v])=>k.endsWith('Present')&&v===true)?'VALIDATED':'NOT_PROVIDED';
     return {
-      request: { ...request }, provider: 'railkit', providerState: 'SUCCESS',
+      request: { ...request }, provider: 'railkit', providerState: 'SUCCESS', identityEvidence:identity,
       trainName: optionalText(train?.trainName),
       fare: data.fare === undefined ? undefined : normalizeFare(data.fare),
       days: data.availability.map(normalizeDay),
     };
-  } catch (error: unknown) { return availabilityFailure(request, {transportEvidence:providerTransportEvidence(error,providerTransportEvidence(value).statusCode)}); }
+  } catch (error: unknown) { return {...availabilityFailure(request, {transportEvidence:providerTransportEvidence(error,providerTransportEvidence(value).statusCode)}),identityEvidence:identity}; }
 }

@@ -109,7 +109,7 @@ test('V2 recovery CLI is keyless, fake-only and free of discovery/info calls',t=
 test('V2 shared session deduplicates concurrent exact requests and failures',async()=>{
   const p=provider(async()=>{await Promise.resolve();return 'WAITLIST' as const;}),session=new AvailabilitySession(p,1);
   const r:AvailabilityRequest={trainNumber:'30001',fromStationCode:'A',toStationCode:'D',journeyDate:date,travelClass:'SL',quota:'GN'};
-  const results=await Promise.all([session.get(r),session.get(r)]);assert.equal(p.calls.length,1);assert.deepEqual(results[0],results[1]);assert.equal(session.statistics().availabilityCacheHits,1);assert.equal(session.remaining,0);
+  const results=await Promise.all([session.get(r),session.get(r)]);assert.equal(p.calls.length,1);assert.deepEqual(results[1],{...results[0],evidence:{...results[0].evidence!,evidenceSource:'SEARCH_LOCAL_CACHE',sdkInvokedForCheck:false}});assert.equal(session.statistics().availabilityCacheHits,1);assert.equal(session.remaining,0);
 });
 test('V2 recovery cached unavailable whole leg leaves remaining shared budget for intervals',async t=>{
   const {db,input}=setup(t),p=provider(r=>['A-B-SL','B-D-3A'].includes(key(r))?'AVAILABLE':'WAITLIST'),session=new AvailabilitySession(p,8);

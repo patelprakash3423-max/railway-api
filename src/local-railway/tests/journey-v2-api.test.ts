@@ -35,7 +35,7 @@ test('production V2 route uses local planner and only availability; compact full
   assert.ok(j.legs.length);assert.ok(j.departureDateTime);assert.ok(j.totalFare);
  }
  assert.equal(r.results[0].presentation.badges[0],'BEST_OPTION');
- assert.doesNotMatch(reply.body,/rawDetails|wholeLegValidation|scheduleCandidate|RAILKIT_API_KEY|providerMessage/);assert.deepEqual(h.logs.map(l=>l.event),['journey_v2_search_started','journey_v2_search_completed']);
+ assert.doesNotMatch(reply.body,/rawDetails|wholeLegValidation|scheduleCandidate|RAILKIT_API_KEY|providerMessage/);assert.deepEqual(h.logs.map(l=>l.event),['journey_v2_search_started','journey_v2_availability_evidence','journey_v2_search_completed']);
 });
 test('production V2 split class preserves RAC and interval order',async t=>{
  const h=setup(t,r=>r.toStationCode==='BBB'&&r.travelClass==='SL'?'AVAILABLE':r.fromStationCode==='BBB'&&r.travelClass==='3A'?'RAC':'WAITLIST');

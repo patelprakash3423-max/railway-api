@@ -1,3 +1,4 @@
+import {withAvailabilityEvidenceLogger} from '../../providers/availability-evidence.js';
 import {ProviderConfigurationError} from '../../application/errors.js';
 import {emptyAvailabilityMetrics} from '../../providers/availability-observation.js';
 import {presentJourneys} from '../../journey/presentation/index.js';
@@ -61,7 +62,8 @@ export class JourneyV2ApiService {
    this.provider.assertConfigured?.();
    log('journey_v2_search_started');
    inventoryStarted=true;
-   const r=await new PlannerV2JourneyRecoveryService(this.database,{getAvailability:r=>this.provider.getAvailability(r)}).search({source:search.from,destination:search.to,journeyDate:search.date,requestedClasses:search.classes==='ALL'?['ALL']:search.classes,mode:search.mode,quota:'GN'});
+   const activeSearch=search;
+   const r=await withAvailabilityEvidenceLogger(this.options.diagnostics?evidence=>log('journey_v2_availability_evidence',{level:'debug',evidence}):undefined,()=>new PlannerV2JourneyRecoveryService(this.database,{getAvailability:r=>this.provider.getAvailability(r)}).search({source:activeSearch.from,destination:activeSearch.to,journeyDate:activeSearch.date,requestedClasses:activeSearch.classes==='ALL'?['ALL']:activeSearch.classes,mode:activeSearch.mode,quota:'GN'}));
    const d=r.diagnostics,{results,presentation}=presentJourneys(r.journeys.map(serializeJourneyV2));
    const metrics={providerQueueWaits:d.providerQueueWaits,providerQueueWaitMs:d.providerQueueWaitMs,sharedInflightHits:d.sharedInflightHits,sharedCacheHits:d.sharedCacheHits,providerRateLimited:d.providerRateLimited,providerTimeouts:d.providerTimeouts,attemptedAvailabilityChecks:d.attemptedAvailabilityChecks,actualSdkInvocations:d.actualSdkInvocations,cacheHits:d.cacheHits,providerSuccesses:d.providerSuccesses,providerErrors:d.providerErrors,localConfigurationFailures:d.localConfigurationFailures,unsupportedClassSkips:d.unsupportedClassSkips};
    log('journey_v2_search_completed',{...metrics,unsupportedEvidenceCacheHits:d.unsupportedEvidenceCacheHits,providerUnsupportedResponses:d.providerUnsupportedResponses,availabilityCallsMeaning:'BUDGETED_CHECKS',plannerCandidates:d.plannerCandidatesReceived,resultCount:results.length,availabilityCalls:d.availabilityRequestsUsed,budgetLimit:d.availabilityBudgetLimit,durationMs:Math.round(performance.now()-start)});

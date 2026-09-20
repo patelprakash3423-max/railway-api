@@ -1,3 +1,4 @@
+import type {AvailabilityEvidence} from '../../providers/availability-evidence.js';
 import type { RailwayProvider } from '../../providers/railway-provider.js';
 import type { AvailabilityResult } from '../../domain/types/availability.js';
 import type { Fare } from '../../domain/types/fare.js';
@@ -15,7 +16,7 @@ export type AvailabilityProvider = Pick<RailwayProvider, 'getAvailability'> & {
 };
 export type InventoryStatus = 'AVAILABLE' | 'RAC' | 'WAITLIST' | 'UNAVAILABLE' | 'UNSUPPORTED_CLASS' | 'PROVIDER_ERROR';
 export type ErrorCategory = import('../../domain/types/provider-failure.js').ProviderFailureCategory | 'PROVIDER_UNAVAILABLE';
-export interface InventoryCheck { unsupportedScope?: 'EXACT_REQUEST'; travelClass: TravelClass; status: InventoryStatus; availabilityText?: string; fare?: Fare; errorCategory?: ErrorCategory; rawDetails?: AvailabilityResult }
+export interface InventoryCheck { evidence?: AvailabilityEvidence; unsupportedScope?: 'EXACT_REQUEST'; travelClass: TravelClass; status: InventoryStatus; availabilityText?: string; fare?: Fare; errorCategory?: ErrorCategory; rawDetails?: AvailabilityResult }
 export type ValidationStatus = 'FULLY_RESERVED_USABLE' | 'SCHEDULED_BUT_NOT_FULLY_AVAILABLE' | 'INVENTORY_CHECK_INCOMPLETE';
 export interface ValidatedLeg { trainNumber: string; fromStation: string; toStation: string; boardingDate: string; departureDateTime: string; arrivalDateTime: string; distanceKm: number; selectedClass: TravelClass | null; quota: 'GN'; availabilityStatus: InventoryStatus | null; availabilityText?: string; fare?: Fare; checks: InventoryCheck[] }
 export interface ValidatedJourney {

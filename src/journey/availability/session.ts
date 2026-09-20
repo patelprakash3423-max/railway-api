@@ -1,3 +1,4 @@
+import {availabilityEvidence,emitAvailabilityEvidence,observeProviderIdentity,type AvailabilityEvidenceSource,type ProviderIdentityEvidence} from '../../providers/availability-evidence.js';
 import {ProviderConfigurationError} from '../../application/errors.js';
 import {emptyAvailabilityMetrics,observeAvailabilitySdk,observeAvailabilityMetrics,type AvailabilityMetrics} from '../../providers/availability-observation.js';
 import type { AvailabilityRequest } from '../../domain/types/availability.js';
@@ -52,14 +53,25 @@ export class AvailabilitySession {
     this.assertActive();
     this.checkConfiguration();
     const r={...request},key=requestKey(r),hit=this.cache.get(key),pending=this.pending.get(key);
-    if(hit||pending){this.counts.availabilityCacheHits++;return hit??pending!;}
+    if(hit||pending){
+      this.counts.availabilityCacheHits++;
+      const cached=hit??await pending!;
+      const evidence=availabilityEvidence(r,cached,'SEARCH_LOCAL_CACHE',false,cached.evidence);
+      emitAvailabilityEvidence(evidence);return {...cached,evidence};
+    }
     if(this.remaining < 1) throw new Error('Availability allowance exhausted');
     this.budget.consumeCall();const c=r.travelClass as TravelClass;this.counts.classChecksByClass[c]=(this.counts.classChecksByClass[c]??0)+1;
     // Defer invocation one microtask so the in-flight key exists even if a provider throws.
     const task=Promise.resolve().then(async()=>{
       let result:InventoryCheck;
-      let timeoutObserved=false;
-      try{result=normalizeInventory(r,await observeAvailabilityMetrics((key,amount)=>{this.counts[key]+=amount;if(key==='providerTimeouts')timeoutObserved=true;},()=>observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;},()=>this.provider.getAvailability({...r}))));}catch(error){
+      let timeoutObserved=false,sdkInvoked=false;
+      let source:AvailabilityEvidenceSource='NOT_OBSERVED',identity:ProviderIdentityEvidence|undefined;
+      try{result=normalizeInventory(r,await observeProviderIdentity(value=>{identity=value;},()=>observeAvailabilityMetrics((key,amount)=>{
+        this.counts[key]+=amount;if(key==='providerTimeouts')timeoutObserved=true;
+        if(key==='sharedInflightHits')source='SHARED_INFLIGHT';
+        if(key==='sharedCacheHits')source='SHARED_CACHE';
+        if(key==='unsupportedEvidenceCacheHits')source='UNSUPPORTED_EVIDENCE_CACHE';
+      },()=>observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;sdkInvoked=true;source='FRESH_PROVIDER';},()=>this.provider.getAvailability({...r})))));}catch(error){
         if (error instanceof ProviderConfigurationError) {
           this.counts.localConfigurationFailures++;
           this.configurationFailure = error;
@@ -73,6 +85,8 @@ export class AvailabilitySession {
       if(result.errorCategory==='RATE_LIMITED')this.counts.providerRateLimited++;
       if(['AVAILABLE','RAC','WAITLIST','UNAVAILABLE'].includes(result.status))this.counts.providerSuccesses++;
       if(result.errorCategory==='UNSUPPORTED_CLASS')result={...result,status:'UNSUPPORTED_CLASS'};
+      result={...result,evidence:availabilityEvidence(r,result,source,sdkInvoked,identity)};
+      emitAvailabilityEvidence(result.evidence!);
       this.cache.set(key,result);
       // A provider response describes this route only; it cannot teach train-wide class support.
       if(result.status==='AVAILABLE')this.counts.availableResponses++;else if(result.status==='RAC')this.counts.racResponses++;else if(result.status==='WAITLIST')this.counts.waitlistResponses++;else if(result.status==='UNAVAILABLE')this.counts.unavailableResponses++;else if(result.errorCategory==='UNSUPPORTED_CLASS')this.counts.unsupportedClassResponses++;else{this.counts.providerErrors++;const category=result.errorCategory??'UNKNOWN_PROVIDER_ERROR';this.counts.providerErrorCategories[category]=(this.counts.providerErrorCategories[category]??0)+1;}

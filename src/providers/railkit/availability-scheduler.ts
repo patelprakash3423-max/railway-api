@@ -1,3 +1,4 @@
+import {providerIdentityObserved,type ProviderIdentityEvidence} from '../availability-evidence.js';
 import {availabilityRequestKey} from '../../utils/availability-key.js';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {hardeningConfig,type HardeningConfig} from '../../config/hardening.js';
@@ -12,7 +13,7 @@ import type {AvailabilityRequest} from '../../domain/types/availability.js';
 type CacheKind='INVENTORY'|'UNSUPPORTED_CLASS';
 type CachedEvidence={expires:number;value:unknown};
 type Waiter={signal?:AbortSignal;run:ReturnType<typeof AsyncLocalStorage.snapshot>;resolve:(v:unknown)=>void;reject:(e:unknown)=>void;cleanup:()=>void;queuedAt:number;waited:boolean};
-type Entry={timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
+type Entry={identityEvidence?:ProviderIdentityEvidence;timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
 /** One default instance covers every raw/normalized availability SDK entry point.
  * Queue owners rotate after each start. Running calls are never preempted.
  * Aborted/time-out SDKs retain their slots until the SDK promise actually settles:
@@ -99,6 +100,7 @@ export class AvailabilityScheduler {
     // Materialize evidence BEFORE structuredClone/spread/serialization can lose it.
     if(failed)value={success:false,error:evidence.message,transportEvidence:evidence};
     const normalized=normalizeAvailability(value,entry.request);
+    entry.identityEvidence=normalized.identityEvidence;
     if(normalized.providerState!=='SUCCESS'){
      const transportEvidence=providerTransportEvidence(normalized,entry.httpStatus);
      value={success:false,error:transportEvidence.message,transportEvidence};
@@ -139,7 +141,7 @@ export class AvailabilityScheduler {
  }
  private settle(entry:Entry,value?:unknown,error?:unknown){
   this.remove(entry);
-  for(const w of entry.waiters){this.finishWait(w);if(error instanceof PublicError&&error.code==='PROVIDER_TIMEOUT')w.run(()=>availabilityMetric('providerTimeouts'));if(error!==undefined)w.reject(error);else w.resolve(structuredClone(value));}
+  for(const w of entry.waiters){if(entry.identityEvidence)w.run(()=>providerIdentityObserved(entry.identityEvidence!));this.finishWait(w);if(error instanceof PublicError&&error.code==='PROVIDER_TIMEOUT')w.run(()=>availabilityMetric('providerTimeouts'));if(error!==undefined)w.reject(error);else w.resolve(structuredClone(value));}
   entry.waiters.clear();
  }
 }

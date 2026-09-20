@@ -47,7 +47,7 @@ const request:AvailabilityRequest={trainNumber:'30001',fromStationCode:'AAA',toS
 test('route unsupported phrase has an explicit category and exact concurrent cache',async()=>{
  const p=provider(()=>unsupported),session=new AvailabilitySession(p,30);
  const [a,b]=await Promise.all([session.get(request),session.get({...request})]);
- assert.equal(a.status,'UNSUPPORTED_CLASS');assert.equal(a.errorCategory,'UNSUPPORTED_CLASS');assert.deepEqual(a,b);assert.equal(p.calls.length,1);assert.equal(session.statistics().unsupportedClassResponses,1);assert.equal(session.statistics().providerErrors,0);assert.equal(session.statistics().providerErrorCategories.UNKNOWN_PROVIDER_ERROR,undefined);
+ assert.equal(a.status,'UNSUPPORTED_CLASS');assert.equal(a.errorCategory,'UNSUPPORTED_CLASS');assert.deepEqual(b,{...a,evidence:{...a.evidence!,evidenceSource:'SEARCH_LOCAL_CACHE',sdkInvokedForCheck:false}});assert.equal(p.calls.length,1);assert.equal(session.statistics().unsupportedClassResponses,1);assert.equal(session.statistics().providerErrors,0);assert.equal(session.statistics().providerErrorCategories.UNKNOWN_PROVIDER_ERROR,undefined);
  await session.get({...request,toStationCode:'BBB'});assert.equal(p.calls.length,2);assert.equal(session.unsupported.size,0);
 });
 test('unsupported class allows another class to succeed in Journey V2',async t=>{

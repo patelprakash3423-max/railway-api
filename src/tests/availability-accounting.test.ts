@@ -136,7 +136,7 @@ test('cache and in-flight hits do not invoke the SDK or charge quota twice', asy
   const session=new AvailabilitySession(guardedProvider(new RailKitProvider(new AvailabilityScheduler(hardeningConfig({}))),new AbortController().signal,1000,()=>{charges++;}),30);
   const [a,b]=await Promise.all([session.get(request),session.get(request)]);
   await session.get(request);
-  assert.deepEqual(a,b);
+  assert.deepEqual(b,{...a,evidence:{...a.evidence!,evidenceSource:'SEARCH_LOCAL_CACHE',sdkInvokedForCheck:false}});
   assert.equal(a.status,'AVAILABLE');
   const d=session.statistics();
   assert.equal(d.attemptedAvailabilityChecks,1);
