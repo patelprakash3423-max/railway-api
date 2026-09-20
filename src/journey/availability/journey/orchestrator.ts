@@ -4,7 +4,7 @@ import { searchModeConfig } from '../../../application/search-mode.js';
 import { travelClasses } from '../../types/journey-segment.js';
 import { AvailabilityOrchestrator } from '../orchestrator.js';
 import { AvailabilitySession } from '../session.js';
-import { recoverSingleTrainLeg } from '../recovery/recover.js';
+import { recoverSingleTrainLeg, type DeferredRecoveryWork } from '../recovery/recover.js';
 import type { RecoverySegment, ReservedSegment, RecoveryLimits } from '../recovery/types.js';
 import type { AvailabilityProvider, ValidationInput, ValidationOptions, ValidatedJourney } from '../types.js';
 
@@ -68,6 +68,7 @@ export class JourneyRecoveryOrchestrator {
     const journeys: RecoveredJourney[]=[];
     const validator=new AvailabilityOrchestrator(this.provider,{...this.options,progressiveAllocation:true,completeFailedCandidates:true,usableTarget:target});
     const recoveryAttempted=new Set<number>();
+    const deferredRecovery:{rank:number;minimumCost:()=>number;run:(allowance:number)=>Promise<void>;remainingCap:()=>number}[]=[];
     const budgetDeferred=new Set<number>(),targetDeferred=new Set<number>();
     const checked=new Set<number>(),fullyChecked=new Set<number>(),wholeUsable=new Set<number>();
     let protectedRemaining=initialReserve;
@@ -135,32 +136,57 @@ export class JourneyRecoveryOrchestrator {
           const fairShare=Math.floor(Math.max(0,session.remaining-1)/Math.max(1,recoveryCandidatesRemaining));
           const allowance=Math.min(cap,fairShare);
           recoveryCandidatesRemaining=Math.max(0,recoveryCandidatesRemaining-1);
-          const recoveryBefore=session.budget.callsUsed;
-          await session.withAllowance(allowance,async()=>{
-            for(const i of eligible){
-              d.legsRecoveryAttempted++;d.bottleneckLegsEvaluated++;
-              const l=whole.scheduleCandidate.segments[i];
-              const recovered=await recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits);
-              const best=recovered.best;
-              // Consume the best evidence even below the standalone leg threshold:
-              // eligibility belongs to the complete journey, not individual legs.
-              legs[i]={...legs[i],recoveryStatus:best.recoveryStatus,segments:best.segments,reservedDistanceKm:best.reservedDistanceKm,reservedCoverageRatio:best.reservedCoverageRatio,unknownDistanceKm:recovered.diagnostics.providerErrors&&best.reservedCoverageRatio<1?best.selfManagedDistanceKm:0};
-              if(legs[i].unknownDistanceKm)legs[i].segments=best.segments.filter(isReserved);
-              if(best.reservedDistanceKm>0)d.legsRecoverySucceeded++;
-              d.truncated ||= recovered.diagnostics.truncated;
-              if(recovered.diagnostics.truncationReasons.includes('availabilityBudget')){candidateCapPruned=true;budgetIncomplete.add(i);}
-              result=assemble(whole,legs,threshold);
-              if(result.reservedCoverageRatio>=1){d.recoveryEarlyStops++;break;}
-              const remaining=eligible.slice(eligible.indexOf(i)+1);
-              const maximum=result.reservedDistanceKm+remaining.reduce((n,k)=>n+legs[k].legDistanceKm,0);
-              if(remaining.length&&maximum+1e-9<threshold*result.totalDistanceKm){d.coverageFeasibilityPruned++;break;}
+          const workByLeg=new Map<number,DeferredRecoveryWork>();
+          let candidateSpent=0;
+          const runRecovery=async(allowance:number)=>{
+            const recoveryBefore=session.budget.callsUsed;
+            await session.withAllowance(allowance,async()=>{
+              for(const i of eligible){
+                if(legs[i].reservedCoverageRatio>=1||(workByLeg.has(i)&&!workByLeg.get(i)!.requests.length))continue;
+                const firstAttempt=!workByLeg.has(i);
+                const deferred:DeferredRecoveryWork={requests:[]};
+                workByLeg.set(i,deferred);
+                if(firstAttempt){d.legsRecoveryAttempted++;d.bottleneckLegsEvaluated++;}
+                const l=whole.scheduleCandidate.segments[i];
+                const recovered=await recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,deferred);
+                const best=recovered.best;
+                // Consume the best evidence even below the standalone leg threshold:
+                // eligibility belongs to the complete journey, not individual legs.
+                if(best.reservedDistanceKm>0&&legs[i].reservedDistanceKm===0)d.legsRecoverySucceeded++;
+                legs[i]={...legs[i],recoveryStatus:best.recoveryStatus,segments:best.segments,reservedDistanceKm:best.reservedDistanceKm,reservedCoverageRatio:best.reservedCoverageRatio,unknownDistanceKm:recovered.diagnostics.providerErrors&&best.reservedCoverageRatio<1?best.selfManagedDistanceKm:0};
+                if(legs[i].unknownDistanceKm)legs[i].segments=best.segments.filter(isReserved);
+                d.truncated ||= recovered.diagnostics.truncated;
+                if(recovered.diagnostics.truncationReasons.includes('availabilityBudget')){candidateCapPruned=true;budgetIncomplete.add(i);}
+                result=assemble(whole,legs,threshold);
+                if(result.reservedCoverageRatio>=1){d.recoveryEarlyStops++;break;}
+                const remaining=eligible.slice(eligible.indexOf(i)+1);
+                const maximum=result.reservedDistanceKm+remaining.reduce((n,k)=>n+legs[k].legDistanceKm,0);
+                if(remaining.length&&maximum+1e-9<threshold*result.totalDistanceKm){d.coverageFeasibilityPruned++;break;}
+              }
+            });
+            const recoveryCalls=session.budget.callsUsed-recoveryBefore;
+            candidateSpent+=recoveryCalls;
+            d.recoveryIntervalRequests+=recoveryCalls;
+            if(phase==='PROTECTED'){
+              const used=Math.min(protectedRemaining,recoveryCalls);
+              protectedRemaining-=used;d.recoveryReserveUsed+=used;
             }
-          });
-          const recoveryCalls=session.budget.callsUsed-recoveryBefore;
-          d.recoveryIntervalRequests+=recoveryCalls;
-          if(phase==='PROTECTED'){
-            const used=Math.min(protectedRemaining,recoveryCalls);
-            protectedRemaining-=used;d.recoveryReserveUsed+=used;
+          };
+          await runRecovery(allowance);
+          // Defaults throttle each fair turn. Explicit caller caps remain hard
+          // totals across the initial attempt and every revisit turn.
+          const remainingCap=()=>this.options.maxRecoveryRequestsPerCandidate===undefined?Infinity:Math.max(0,cap-candidateSpent);
+          const minimumCost=()=>Math.min(...[...workByLeg.values()].flatMap(w=>w.requests).map(r=>session.missingRequests(r)));
+          if(result.reservedCoverageRatio<1&&Number.isFinite(minimumCost())&&remainingCap()>0){
+            deferredRecovery.push({rank:whole.scheduleRank,minimumCost,remainingCap,run:async allowance=>{
+              budgetIncomplete.clear();
+              await runRecovery(allowance);
+              if(result.reservedCoverageRatio+1e-9<threshold&&budgetIncomplete.size){
+                for(const i of budgetIncomplete){legs[i].unknownDistanceKm=legs[i].legDistanceKm-legs[i].reservedDistanceKm;legs[i].segments=legs[i].segments.filter(isReserved);}
+                result=assemble(whole,legs,threshold);
+              }
+              journeys[journeys.findIndex(j=>j.scheduleRank===whole.scheduleRank)]=result;
+            }});
           }
         }
         if(result.reservedCoverageRatio+1e-9<threshold&&budgetIncomplete.size){
@@ -173,6 +199,25 @@ export class JourneyRecoveryOrchestrator {
       }
       offset+=scheduledBatch.length;
     }
+    }
+    // Whole-leg reserve release has priority. Rotate deferred candidates so
+    // each gets a fair turn before another turn goes to the same candidate.
+    // Atomic groups can borrow only enough to make progress. A finite sweep
+    // bound and no-progress stop also bound cache-only work.
+    for(let pass=0;pass<=session.limit&&deferredRecovery.length;pass++){
+      session.assertActive();
+      const active=deferredRecovery.filter(w=>journeys.find(j=>j.scheduleRank===w.rank)!.reservedCoverageRatio<1&&w.minimumCost()<=Math.min(session.remaining,w.remainingCap()));
+      if(!active.length)break;
+      const before=session.budget.callsUsed;
+      for(const [index,work] of active.entries()){
+        session.assertActive();
+        if(journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target)break;
+        const cost=work.minimumCost();
+        if(cost>Math.min(session.remaining,work.remainingCap()))continue;
+        const share=Math.floor(session.remaining/(active.length-index));
+        await work.run(Math.min(session.remaining,work.remainingCap(),Math.max(cost,Math.min(cap,share))));
+      }
+      if(session.budget.callsUsed===before||journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target)break;
     }
     d.candidatesDeferredByBudget=budgetDeferred.size;
     d.candidatesDeferredByTarget=targetDeferred.size;

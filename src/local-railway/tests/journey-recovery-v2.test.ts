@@ -76,3 +76,18 @@ test('journey CLI requires fake mode and runs keyless with networking denied',as
 test('journey interval provider failure does not manufacture partial coverage',async t=>{const r=await run(t,r=>{if(r.fromStationCode.startsWith('M'))throw {status:429};return partial(r);});assert.equal(r.j.journeyStatus,'INVENTORY_CHECK_INCOMPLETE');assert.ok(r.j.unknownDistanceKm>0);assert.equal(r.j.selfManagedDistanceKm,0);});
 test('journey full split sums only known reservation fares',async t=>{const r=await run(t,split);assert.equal(r.j.knownReservedFare,200);assert.equal(r.j.fareComplete,true);assert.equal(r.j.trainChanges,0);assert.equal(r.j.classChanges,1);});
 test('journey unsupported classes cannot trigger interval spending',async t=>{const r=await run(t,()=> 'WAITLIST',[1000],[.7],{},1,360,{'30001':[]});assert.equal(r.calls.length,0);assert.equal(r.diagnostics.legsRecoveryAttempted,0);assert.equal(r.j.journeyStatus,'SCHEDULED_BUT_NOT_FULLY_AVAILABLE');});
+
+test('Phase C ALL reaches deferred complementary 3E within STANDARD budget',async t=>{
+  const {db,candidate}=fixture(t),calls:AvailabilityRequest[]=[];
+  const provider={getAvailability:async(r:AvailabilityRequest):Promise<AvailabilityResult>=>{
+    calls.push({...r});
+    const state=(r.toStationCode==='M0'&&r.travelClass==='SL')||(r.fromStationCode==='M0'&&r.travelClass==='3E')?'AVAILABLE':'WAITLIST';
+    return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state}]};
+  }};
+  const result=await new JourneyRecoveryOrchestrator(db,provider).validate({source:'S0',destination:'S1',journeyDate:date,requestedClasses:['ALL'],plannerCandidates:[candidate]});
+  t.diagnostic(JSON.stringify({whole:result.diagnostics.wholeLegRequests,interval:result.diagnostics.recoveryIntervalRequests,remaining:result.diagnostics.budgetRemaining,classes:calls.filter(r=>r.fromStationCode==='M0').map(r=>r.travelClass)}));
+  assert.equal(result.journeys[0].journeyStatus,'FULLY_RESERVED_WITH_SPLIT_CLASS');
+  assert.equal(result.journeys[0].trainChanges,0);
+  assert.deepEqual(result.journeys[0].legs[0].segments.map(s=>s.type==='RESERVED'?[s.trainNumber,s.selectedClass]:s.type),[['30001','SL'],['30001','3E']]);
+  assert.ok(calls.length<=30);
+});

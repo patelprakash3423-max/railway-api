@@ -41,6 +41,7 @@ export class AvailabilitySession {
     this.allowanceEnd = Math.min(previous, this.budget.callsUsed + calls);
     try { return await work(); } finally { this.allowanceEnd = previous; }
   }
+  assertActive(): void { this.provider.assertActive?.(); }
   get remaining() { return Math.max(0, Math.min(this.limit, this.allowanceEnd) - this.budget.callsUsed); }
   peekKey(key: string) { return this.cache.get(key); }
   hasKey(key: string) { return this.cache.has(key) || this.pending.has(key); }
@@ -48,6 +49,7 @@ export class AvailabilitySession {
   canAfford(requests: AvailabilityRequest[]) { return this.missingRequests(requests) <= this.remaining; }
   statistics(): SessionStatistics { return { ...this.counts, classChecksByClass:{...this.counts.classChecksByClass},providerErrorCategories:{...this.counts.providerErrorCategories},availabilityBudgetLimit:this.limit,availabilityRequestsUsed:this.budget.callsUsed,attemptedAvailabilityChecks:this.budget.callsUsed,cacheHits:this.counts.availabilityCacheHits,unsupportedClassSkips:this.skippedClasses.size,budgetRemaining:this.remaining }; }
   async get(request: AvailabilityRequest): Promise<InventoryCheck> {
+    this.assertActive();
     this.checkConfiguration();
     const r={...request},key=requestKey(r),hit=this.cache.get(key),pending=this.pending.get(key);
     if(hit||pending){this.counts.availabilityCacheHits++;return hit??pending!;}

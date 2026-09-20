@@ -18,7 +18,7 @@ export function validateBookingDate(date:string,horizon:number,now=Date.now()){
  if(day<today||day>today+horizon)throw new PublicError('INVALID_DATE',`Choose a date from today through the next ${horizon} days.`);
 }
 export function guardedProvider(provider:AvailabilityProvider,signal:AbortSignal,timeoutMs:number,consume:()=>void):AvailabilityProvider {
- return {getAvailability:async request=>{
+ return {assertActive:()=>signal.throwIfAborted(),getAvailability:async request=>{
   signal.throwIfAborted();
   // Shared RailKit work owns its execution timeout and transport signal.
   // The search signal cancels only this waiter; quota belongs to the scheduler.

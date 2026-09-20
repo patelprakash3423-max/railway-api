@@ -12,9 +12,10 @@ import { defaultRecoveryLimits,type RecoveryInput,type RecoveryLimits,type Recov
 const datetime=(minutes:number)=>new Date(minutes*60000).toISOString().slice(0,16)+':00+05:30';
 function wallTime(value:string):number{if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+05:30$/.test(value))throw new Error('Use railway timestamps with +05:30');const m=Date.parse(value)/60000+330;if(!Number.isFinite(m)||datetime(m)!==value)throw new Error('Invalid timestamp');parseDate(formatDate(m));return m;}
 const classRounds:TravelClass[][]=[['SL','3A'],['2A','CC','2S'],['1A','EC','3E']];
+export interface DeferredRecoveryWork { requests: AvailabilityRequest[][] }
 /** Recovery never owns a provider or creates a second budget. Pass the SAME
  * AvailabilitySession used for whole-leg validation. Call sequentially per request. */
-export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={}):Promise<RecoveryResult>{
+export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork):Promise<RecoveryResult>{
   const limits={...defaultRecoveryLimits,...options};
   for(const [key,value]of Object.entries(limits))if(!Number.isFinite(value)||(key==='minimumReservedCoverageRatio'?value<=0||value>1:!Number.isSafeInteger(value)||value<1||value>1000))throw new Error(`Invalid recovery limit ${key}`);
   if(input.quota!==undefined&&input.quota!=='GN')throw new Error('Only GN quota supported');
@@ -67,11 +68,13 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
     if(skipped)session.recordUnsupportedClassSkip(trainNumber,c);
     return skipped;
   };
+  const deferredGroups:{group:Interval[];classes:TravelClass[]}[]=[];
   const evaluate=async(group:Interval[],classes:TravelClass[])=>{
+    session.assertActive();
     const pending=group.filter(v=>![...v.checks.values()].some(usable));
     const plan=pending.map(v=>{const cached=requested.filter(c=>{const x=session.peekKey(requestKey(request(v,c)));return x&&usable(x);});return{v,classes:(cached.length?cached:classes).filter(c=>!v.checks.has(c)&&!knownUnsupported(c))};});
     const requests=plan.flatMap(p=>p.classes.map(c=>request(p.v,c)));
-    if(!session.canAfford(requests)){d.atomicIntervalDeferrals++;truncate('availabilityBudget');return;}
+    if(!session.canAfford(requests)){deferredGroups.push({group,classes});d.atomicIntervalDeferrals++;truncate('availabilityBudget');return;}
     // Largest coverage block first; a cache-known poor block wins a length tie.
     plan.sort((x,y)=>(nodes[y.v.b].distanceKm!-nodes[y.v.a].distanceKm!)-(nodes[x.v.b].distanceKm!-nodes[x.v.a].distanceKm!)||x.v.a-y.v.a||x.v.b-y.v.b);
     for(const {v,classes:availableClasses} of plan)for(const c of availableClasses){
@@ -87,6 +90,11 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
     if(!groups.length)continue;d.searchRoundsAttempted.push(`${name}:${rounds[round].join('+')}`);
     for(const group of groups){await evaluate(group,rounds[round]);if(fullFound())break outer;}
   }
+  // Keep only unresolved atomic work; later groups may have supplied evidence.
+  if(deferred)deferred.requests=fullFound()?[]:deferredGroups.map(({group,classes})=>
+    group.filter(v=>![...v.checks.values()].some(usable)).flatMap(v=>
+      classes.filter(c=>!v.checks.has(c)&&!knownUnsupported(c)).map(c=>request(v,c))
+    )).filter(requests=>requests.length>0);
   const after=session.statistics();d.availabilityRequestsUsed=after.availabilityRequestsUsed-before.availabilityRequestsUsed;d.availabilityCacheHits=after.availabilityCacheHits-before.availabilityCacheHits;d.budgetRemaining=session.remaining;
   const toSolution=(p:Path):RecoverySolution=>{
     const ratio=p.reserved/input.distanceKm,full=p.segments.length>0&&p.segments.every(s=>s.type==='RESERVED'),reserved=p.segments.filter((s):s is ReservedSegment=>s.type==='RESERVED');

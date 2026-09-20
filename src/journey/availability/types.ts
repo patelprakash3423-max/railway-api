@@ -8,6 +8,8 @@ import type {AvailabilityMetrics} from '../../providers/availability-observation
 /** The integration cannot access discovery or train-info methods. */
 export type AvailabilityProvider = Pick<RailwayProvider, 'getAvailability'> & {
   assertConfigured?: () => void;
+  /** Request cancellation/deadline guard; independent of inventory evidence. */
+  assertActive?: () => void;
   /** Other injected providers retain conservative adapter-invocation accounting. */
   quotaAccounting?: 'SDK_INVOCATION';
 };
