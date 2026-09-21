@@ -71,8 +71,9 @@ export class AvailabilityOrchestrator {
       };
       const start=budget.callsUsed;
       const breadthChecked=new Set<State>(),completionChecked=new Set<State>(),deepChecked=new Set<State>();
+      // Bound admission so initial breadth cannot consume the completion/recovery budget.
       const maxBreadth={QUICK:3,STANDARD:5,DEEP:7}[mode];
-      const firstClass=rounds[0]?.[0];
+      const firstClass=this.options.directFirst&&!all?requested[0]:rounds[0]?.[0];
       const missing=(s:State,classes:TravelClass[])=>session.missingRequests(s.checks.flatMap((_,i)=>hasUsable(s,i)?[]:classes.filter(c=>s.allowed[i].includes(c)&&!knownUnsupported(s,i,c)).map(c=>request(s,i,c))));
       const leader=states.find(s=>!done(s));
       const fullCost=leader?missing(leader,rounds.flat()):0;
@@ -80,7 +81,7 @@ export class AvailabilityOrchestrator {
       // If feasible, retain enough to make the leading candidate definitive.
       // This adapts breadth to multi-leg cost rather than assuming direct trains.
       const completionHold=rounds.length===1?0:fullCost<=session.remaining?fullCost-firstCost:Math.floor(session.remaining/3);
-      const breadthAllowance=rounds.length===1?session.remaining:Math.min(Math.ceil(session.remaining*2/3),session.remaining-completionHold);
+      const breadthAllowance=this.options.directFirst?session.remaining:rounds.length===1?session.remaining:Math.min(Math.ceil(session.remaining*2/3),session.remaining-completionHold);
       const pool:State[]=[];
       let admissionCost=0;
       for(const s of states){
@@ -92,7 +93,7 @@ export class AvailabilityOrchestrator {
       }
       allocation.candidatesDeferredByBreadthLimit=states.length-pool.length;
       await session.withAllowance(breadthAllowance,async()=>{
-        for(const c of rounds[0]??[]) for(const s of pool){
+        for(const c of this.options.directFirst?(firstClass?[...new Set([firstClass,...rounds[0]??[]])]:[]):rounds[0]??[]) for(const s of pool){
           if(states.filter(isUsable).length>=target)break;
           const before=s.checks.reduce((n,x)=>n+x.size,0);
           await attempt(s,c);

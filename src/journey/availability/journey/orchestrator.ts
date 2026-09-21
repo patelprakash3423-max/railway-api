@@ -5,7 +5,7 @@ import { travelClasses } from '../../types/journey-segment.js';
 import { AvailabilityOrchestrator } from '../orchestrator.js';
 import { AvailabilitySession } from '../session.js';
 import { recoverSingleTrainLeg, type DeferredRecoveryWork } from '../recovery/recover.js';
-import type { RecoverySegment, ReservedSegment, RecoveryLimits } from '../recovery/types.js';
+import type { RecoverySegment, ReservedSegment, RecoveryLimits, RecoveryDiagnostics } from '../recovery/types.js';
 import type { AvailabilityProvider, ValidationInput, ValidationOptions, ValidatedJourney } from '../types.js';
 
 export type JourneyStatus = 'FULLY_RESERVED_USABLE' | 'FULLY_RESERVED_WITH_SPLIT_CLASS' | 'PARTIAL_RESERVED_RECOVERY' | 'SCHEDULED_BUT_NOT_FULLY_AVAILABLE' | 'INVENTORY_CHECK_INCOMPLETE';
@@ -64,15 +64,26 @@ export class JourneyRecoveryOrchestrator {
     if(!Number.isSafeInteger(reserve)||reserve<0||!Number.isFinite(threshold)||threshold<=0||threshold>1||!Number.isSafeInteger(cap)||cap<0||!Number.isSafeInteger(target)||target<1||!batches.length||batches.some(n=>!Number.isSafeInteger(n)||n<1))throw new Error('Invalid journey recovery limits');
     const session=new AvailabilitySession(this.provider,this.options.budgetLimit??searchModeConfig(mode).budget!.maxAvailabilityCalls!);
     const initialReserve=Math.min(reserve,session.limit);
-    const d={recoveryReserveInitial:initialReserve,recoveryReserveUsed:0,recoveryReserveReleased:0,releasedReserveCalls:0,candidatesCheckedWholeLeg:0,plannerCandidatesReceived:input.plannerCandidates.length,wholeLegCandidatesValidated:0,wholeLegUsableJourneys:0,candidatesSentToRecovery:0,legsEligibleForRecovery:0,legsRecoveryAttempted:0,legsRecoverySucceeded:0,coverageFeasibilityPruned:0,candidateRecoveryBudgetPruned:0,fullReservedJourneys:0,fullSplitClassJourneys:0,partialRecoveryJourneys:0,scheduledFallbackJourneys:0,inventoryIncompleteJourneys:0,totalReservedDistanceEvaluated:0,totalSelfManagedDistanceReturned:0,wholeLegRequests:0,recoveryIntervalRequests:0,bottleneckLegsEvaluated:0,recoveryEarlyStops:0,candidatesDeferredByBudget:0,candidatesDeferredByTarget:0,truncated:false,breadthCandidatesConsidered:0,breadthCandidatesChecked:0,breadthRequests:0,completionCandidatesConsidered:0,completionCandidatesChecked:0,completionRequests:0,deepWideningCandidates:0,deepWideningRequests:0,candidatesDeferredByAtomicCost:0,candidatesDeferredByBreadthLimit:0};
+    const d={directCandidates:0,directWholeLegChecks:0,directWholeLegUsable:0,sameTrainRecoveryCandidates:0,sameTrainStationsEligible:0,sameTrainStationsConsidered:0,sameTrainStationsRemaining:0,sameTrainFullRecoveries:0,directLaneBudgetUsed:0,indirectLaneStarted:false,indirectLaneBudgetUsed:0,recoveryReserveInitial:initialReserve,recoveryReserveUsed:0,recoveryReserveReleased:0,releasedReserveCalls:0,candidatesCheckedWholeLeg:0,plannerCandidatesReceived:input.plannerCandidates.length,wholeLegCandidatesValidated:0,wholeLegUsableJourneys:0,candidatesSentToRecovery:0,legsEligibleForRecovery:0,legsRecoveryAttempted:0,legsRecoverySucceeded:0,coverageFeasibilityPruned:0,candidateRecoveryBudgetPruned:0,fullReservedJourneys:0,fullSplitClassJourneys:0,partialRecoveryJourneys:0,scheduledFallbackJourneys:0,inventoryIncompleteJourneys:0,totalReservedDistanceEvaluated:0,totalSelfManagedDistanceReturned:0,wholeLegRequests:0,recoveryIntervalRequests:0,bottleneckLegsEvaluated:0,recoveryEarlyStops:0,candidatesDeferredByBudget:0,candidatesDeferredByTarget:0,truncated:false,breadthCandidatesConsidered:0,breadthCandidatesChecked:0,breadthRequests:0,completionCandidatesConsidered:0,completionCandidatesChecked:0,completionRequests:0,deepWideningCandidates:0,deepWideningRequests:0,candidatesDeferredByAtomicCost:0,candidatesDeferredByBreadthLimit:0};
     const journeys: RecoveredJourney[]=[];
-    const validator=new AvailabilityOrchestrator(this.provider,{...this.options,progressiveAllocation:true,completeFailedCandidates:true,usableTarget:target});
+    const directProgress=new Map<number,RecoveryDiagnostics>();
     const recoveryAttempted=new Set<number>();
     const deferredRecovery:{rank:number;minimumCost:()=>number;run:(allowance:number)=>Promise<void>;remainingCap:()=>number}[]=[];
     const budgetDeferred=new Set<number>(),targetDeferred=new Set<number>();
     const checked=new Set<number>(),fullyChecked=new Set<number>(),wholeUsable=new Set<number>();
     let protectedRemaining=initialReserve;
-    // Global breadth and completion with protected recovery capacity.
+    const scheduled=input.plannerCandidates.map((candidate,i)=>({candidate,rank:i+1}));
+    const isDirect=(x:typeof scheduled[number])=>x.candidate.segments.length===1&&x.candidate.changes===0;
+    const direct=scheduled.filter(isDirect),indirect=scheduled.filter(x=>!isDirect(x));
+    d.directCandidates=direct.length;
+    for(const lane of [direct,indirect]){
+    if(!lane.length)continue;
+    const directLane=lane===direct,laneBefore=session.budget.callsUsed,wholeBefore=d.wholeLegRequests;
+    // Explicit selections are a hard scope; only ALL expands canonical classes.
+    const laneInput=input;
+    const validator=new AvailabilityOrchestrator(this.provider,{...this.options,directFirst:directLane,progressiveAllocation:true,completeFailedCandidates:true,usableTarget:target});
+    deferredRecovery.length=0;
+    // Complete direct exact/recovery/revisit work before the indirect lane.
     // Phase C: revisit deferred whole-leg candidates after releasing unused reserve.
     for(const phase of ['PROTECTED','RELEASED'] as const){
     if(phase==='RELEASED'){
@@ -81,13 +92,13 @@ export class JourneyRecoveryOrchestrator {
     }
     let offset=0;
     // Retain unvisited schedule candidates explicitly, without spending inventory calls.
-    while(offset<input.plannerCandidates.length){
+    while(offset<lane.length){
       const stop=journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target;
-      const scheduledBatch=input.plannerCandidates.slice(offset);
-      const indexed=scheduledBatch.map((candidate,i)=>({candidate,rank:offset+i+1})).filter(x=>phase==='PROTECTED'||(!fullyChecked.has(x.rank)&&!recoveryAttempted.has(x.rank)));
+      const scheduledBatch=lane.slice(offset);
+      const indexed=scheduledBatch.filter(x=>phase==='PROTECTED'||(!fullyChecked.has(x.rank)&&!recoveryAttempted.has(x.rank)));
       const batch=indexed.map(x=>x.candidate);
       const before=session.budget.callsUsed;
-      const validated=await session.withAllowance(stop?0:Math.max(0,session.remaining-protectedRemaining),()=>validator.validate({...input,plannerCandidates:batch},session));
+      const validated=await session.withAllowance(stop?0:Math.max(0,session.remaining-protectedRemaining),()=>validator.validate({...laneInput,plannerCandidates:batch},session));
       const wholeCalls=session.budget.callsUsed-before;
       if(validated.allocationDiagnostics)for(const key of Object.keys(validated.allocationDiagnostics) as (keyof typeof validated.allocationDiagnostics)[])d[key]+=validated.allocationDiagnostics[key];
       d.wholeLegRequests+=wholeCalls;
@@ -109,7 +120,7 @@ export class JourneyRecoveryOrchestrator {
         const eligible: number[]=[];
         let unverified=false;
         const legs: JourneyLeg[]=whole.legs.map((l,i)=>{
-          const allowed=(input.requestedClasses.some(c=>c.trim().toUpperCase()==='ALL')?[...travelClasses]:input.requestedClasses.map(c=>c.trim().toUpperCase())).filter(c=>input.supportedClassesByTrain?.[l.trainNumber]===undefined||input.supportedClassesByTrain[l.trainNumber].map(c=>c.trim().toUpperCase()).includes(c));
+          const allowed=(laneInput.requestedClasses.some(c=>c.trim().toUpperCase()==='ALL')?[...travelClasses]:laneInput.requestedClasses.map(c=>c.trim().toUpperCase())).filter(c=>input.supportedClassesByTrain?.[l.trainNumber]===undefined||input.supportedClassesByTrain[l.trainNumber].map(c=>c.trim().toUpperCase()).includes(c));
           unverified ||= allowed.some(c=>!session.unsupported.get(l.trainNumber)?.has(c as typeof travelClasses[number])&&!l.checks.some(x=>x.travelClass===c))&&!['AVAILABLE','RAC'].includes(l.availabilityStatus??'');
           const usable=l.availabilityStatus==='AVAILABLE'||l.availabilityStatus==='RAC';
           const failed=!usable&&allowed.every(c=>session.unsupported.get(l.trainNumber)?.has(c as typeof travelClasses[number])||l.checks.some(x=>x.travelClass===c&&(x.status==='WAITLIST'||x.status==='UNAVAILABLE'||x.errorCategory==='UNSUPPORTED_CLASS')));
@@ -148,7 +159,8 @@ export class JourneyRecoveryOrchestrator {
                 workByLeg.set(i,deferred);
                 if(firstAttempt){d.legsRecoveryAttempted++;d.bottleneckLegsEvaluated++;}
                 const l=whole.scheduleCandidate.segments[i];
-                const recovered=await recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,deferred);
+                const recovered=await recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:laneInput.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,deferred,{progressiveStations:directLane});
+                if(directLane)directProgress.set(whole.scheduleRank,recovered.diagnostics);
                 const best=recovered.best;
                 // Consume the best evidence even below the standalone leg threshold:
                 // eligibility belongs to the complete journey, not individual legs.
@@ -219,6 +231,27 @@ export class JourneyRecoveryOrchestrator {
       }
       if(session.budget.callsUsed===before||journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target)break;
     }
+    const laneUsed=session.budget.callsUsed-laneBefore;
+    if(directLane){d.directLaneBudgetUsed=laneUsed;d.directWholeLegChecks=d.wholeLegRequests-wholeBefore;}
+    else {d.indirectLaneBudgetUsed=laneUsed;d.indirectLaneStarted=lane.some(x=>journeys.find(j=>j.scheduleRank===x.rank)?.wholeLegValidation.legs.some(l=>l.checks.length));}
+    }
+    if(protectedRemaining){d.recoveryReserveReleased+=Math.min(protectedRemaining,session.remaining);protectedRemaining=0;}
+    const directExploration=direct.map(({candidate,rank})=>{
+      const result=journeys.find(j=>j.scheduleRank===rank)!,progress=directProgress.get(rank);
+      const state=wholeUsable.has(rank)?'EXACT_DIRECT':result.reservedCoverageRatio>=1?'FULL_SAME_TRAIN':
+        progress?.progressive?.complete||input.supportedClassesByTrain?.[candidate.segments[0].trainNumber]?.length===0?'EXHAUSTED_SCOPE':progress?.providerErrors||result.wholeLegValidation.legs.some(l=>l.checks.some(c=>c.status==='PROVIDER_ERROR'))?'INCOMPLETE_PROVIDER':
+        targetDeferred.has(rank)||journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target?'STOPPED_TARGET':
+        progress?.truncationReasons.some(r=>r!=='availabilityBudget')?'INCOMPLETE_LIMIT':'INCOMPLETE_BUDGET';
+      return {scheduleRank:rank,trainNumber:candidate.segments[0].trainNumber,state,intervalsGenerated:progress?.candidateIntervalsGenerated??0,...progress?.progressive};
+    });
+    d.directWholeLegUsable=directExploration.filter(x=>x.state==='EXACT_DIRECT').length;
+    d.sameTrainFullRecoveries=directExploration.filter(x=>x.state==='FULL_SAME_TRAIN').length;
+    d.sameTrainRecoveryCandidates=directProgress.size;
+    for(const progress of directProgress.values()){
+      d.sameTrainStationsEligible+=progress.progressive?.stationsEligible??0;
+      d.sameTrainStationsConsidered+=progress.progressive?.stationsConsidered??0;
+      d.sameTrainStationsRemaining+=progress.progressive?.stationsRemaining??0;
+    }
     d.candidatesDeferredByBudget=budgetDeferred.size;
     d.candidatesDeferredByTarget=targetDeferred.size;
     d.candidatesCheckedWholeLeg=checked.size;
@@ -227,7 +260,7 @@ export class JourneyRecoveryOrchestrator {
     journeys.sort(rankJourneys);journeys.forEach((j,i)=>{j.finalRank=i+1;d.totalReservedDistanceEvaluated+=j.reservedDistanceKm;d.totalSelfManagedDistanceReturned+=j.selfManagedDistanceKm;const fields={FULLY_RESERVED_USABLE:'fullReservedJourneys',FULLY_RESERVED_WITH_SPLIT_CLASS:'fullSplitClassJourneys',PARTIAL_RESERVED_RECOVERY:'partialRecoveryJourneys',SCHEDULED_BUT_NOT_FULLY_AVAILABLE:'scheduledFallbackJourneys',INVENTORY_CHECK_INCOMPLETE:'inventoryIncompleteJourneys'} as const;d[fields[j.journeyStatus]]++;});
     d.truncated ||= d.candidatesDeferredByBudget>0;
     const evidence=journeys.flatMap(j=>j.wholeLegValidation.legs.filter(l=>l.checks.length));
-    return {journeys,diagnostics:{...d,distinctCandidatesWithAnyWholeLegEvidence:new Set(journeys.filter(j=>j.wholeLegValidation.legs.some(l=>l.checks.length)).map(j=>j.scheduleCandidateId)).size,distinctTrainsChecked:new Set(evidence.map(l=>l.trainNumber)).size,distinctTrainClassPairsChecked:new Set(evidence.flatMap(l=>l.checks.map(c=>`${l.trainNumber}:${c.travelClass}`))).size,...session.statistics()},plannerDiagnostics:input.plannerDiagnostics};
+    return {journeys,diagnostics:{...d,directExploration,distinctCandidatesWithAnyWholeLegEvidence:new Set(journeys.filter(j=>j.wholeLegValidation.legs.some(l=>l.checks.length)).map(j=>j.scheduleCandidateId)).size,distinctTrainsChecked:new Set(evidence.map(l=>l.trainNumber)).size,distinctTrainClassPairsChecked:new Set(evidence.flatMap(l=>l.checks.map(c=>`${l.trainNumber}:${c.travelClass}`))).size,...session.statistics()},plannerDiagnostics:input.plannerDiagnostics};
   }
 }
 export class PlannerV2JourneyRecoveryService {

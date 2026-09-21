@@ -15,7 +15,7 @@ const classRounds:TravelClass[][]=[['SL','3A'],['2A','CC','2S'],['1A','EC','3E']
 export interface DeferredRecoveryWork { requests: AvailabilityRequest[][] }
 /** Recovery never owns a provider or creates a second budget. Pass the SAME
  * AvailabilitySession used for whole-leg validation. Call sequentially per request. */
-export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork):Promise<RecoveryResult>{
+export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean}={}):Promise<RecoveryResult>{
   const limits={...defaultRecoveryLimits,...options};
   for(const [key,value]of Object.entries(limits))if(!Number.isFinite(value)||(key==='minimumReservedCoverageRatio'?value<=0||value>1:!Number.isSafeInteger(value)||value<1||value>1000))throw new Error(`Invalid recovery limit ${key}`);
   if(input.quota!==undefined&&input.quota!=='GN')throw new Error('Only GN quota supported');
@@ -43,19 +43,21 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   d.splitPointsConsidered=split.length;
   const score=(s:typeof first)=>{const ratio=(s.distanceKm!-first.distanceKm!)/input.distanceKm;return({MAJOR:40,MEDIUM:20,SMALL:0}[net.metrics.get(s.stationCode)!.tier])+50*(1-Math.abs(.5-ratio)*2)+Math.min(30,eventMinute(s,false)-eventMinute(s,true));};
   split.sort((a,b)=>score(b)-score(a)||a.sequence-b.sequence);
-  if(split.length>limits.maxSplitPoints){truncate('splitPoints');d.intervalsPruned+=split.length-limits.maxSplitPoints;}
-  const selected=split.slice(0,limits.maxSplitPoints);for(const s of selected)d.splitPointsByTier[net.metrics.get(s.stationCode)!.tier]++;
+  if(!strategy.progressiveStations&&split.length>limits.maxSplitPoints){truncate('splitPoints');d.intervalsPruned+=split.length-limits.maxSplitPoints;}
+  const selected=strategy.progressiveStations?split:split.slice(0,limits.maxSplitPoints);for(const s of selected)d.splitPointsByTier[net.metrics.get(s.stationCode)!.tier]++;
   if(d.missingDistanceStopsSkipped)truncate('missingDistanceSplits');
   const nodes=[first,...selected,last].sort((a,b)=>a.sequence-b.sequence),nodePosition=new Map(nodes.map((s,i)=>[s.sequence,i]));
   interface Interval{a:number;b:number;checks:Map<TravelClass,InventoryCheck>}
   const intervals=new Map<string,Interval>();
-  const add=(a:number,b:number)=>{const key=`${a}:${b}`,found=intervals.get(key);if(found)return found;if(intervals.size>=limits.maxIntervals){d.intervalsPruned++;truncate('intervals');return undefined;}const item={a,b,checks:new Map<TravelClass,InventoryCheck>()};intervals.set(key,item);return item;};
+  const add=(a:number,b:number)=>{const key=`${a}:${b}`,found=intervals.get(key);if(found)return found;if(!strategy.progressiveStations&&intervals.size>=limits.maxIntervals){d.intervalsPruned++;truncate('intervals');return undefined;}const item={a,b,checks:new Map<TravelClass,InventoryCheck>()};intervals.set(key,item);return item;};
   const full=add(0,nodes.length-1)!;
   const anchored:Interval[][]=[],splits:Interval[][]=[],broader:Interval[][]=[];
+  if(!strategy.progressiveStations){
   selected.forEach((s,i)=>{const k=nodePosition.get(s.sequence)!;const pair=[add(0,k),add(k,nodes.length-1)].filter((x):x is Interval=>!!x);if(pair.length)(i<2?anchored:splits).push(pair);});
   // Enumerate pairs only among capped split points, never all raw route stops.
   for(let i=1;i<nodes.length-2;i++){const item=add(i,i+1);if(item)splits.push([item]);}
   const inner:{a:number;b:number}[]=[];for(let a=1;a<nodes.length-1;a++)for(let b=a+2;b<nodes.length-1;b++)inner.push({a,b});inner.sort((x,y)=>(nodes[y.b].distanceKm!-nodes[y.a].distanceKm!)-(nodes[x.b].distanceKm!-nodes[x.a].distanceKm!)||x.a-y.a||x.b-y.b);for(const pair of inner){const item=add(pair.a,pair.b);if(item)broader.push([item]);}
+  }
   d.candidateIntervalsGenerated=intervals.size;
   const checks:RecoveryResult['checks']=[];
   const request=(v:Interval,c:TravelClass):AvailabilityRequest=>({trainNumber,fromStationCode:nodes[v.a].stationCode,toStationCode:nodes[v.b].stationCode,journeyDate:formatDate(origin+eventMinute(nodes[v.a],false)),travelClass:c,quota:'GN'});
@@ -74,7 +76,7 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
     const pending=group.filter(v=>![...v.checks.values()].some(usable));
     const plan=pending.map(v=>{const cached=requested.filter(c=>{const x=session.peekKey(requestKey(request(v,c)));return x&&usable(x);});return{v,classes:(cached.length?cached:classes).filter(c=>!v.checks.has(c)&&!knownUnsupported(c))};});
     const requests=plan.flatMap(p=>p.classes.map(c=>request(p.v,c)));
-    if(!session.canAfford(requests)){deferredGroups.push({group,classes});d.atomicIntervalDeferrals++;truncate('availabilityBudget');return;}
+    if(!session.canAfford(requests)){deferredGroups.push({group,classes});d.atomicIntervalDeferrals++;truncate('availabilityBudget');return false;}
     // Largest coverage block first; a cache-known poor block wins a length tie.
     plan.sort((x,y)=>(nodes[y.v.b].distanceKm!-nodes[y.v.a].distanceKm!)-(nodes[x.v.b].distanceKm!-nodes[x.v.a].distanceKm!)||x.v.a-y.v.a||x.v.b-y.v.b);
     for(const {v,classes:availableClasses} of plan)for(const c of availableClasses){
@@ -83,12 +85,48 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
       if(check.status==='AVAILABLE')d.intervalsAvailable++;else if(check.status==='RAC')d.intervalsRac++;else if(check.status==='WAITLIST')d.intervalsWaitlist++;else if(check.status==='PROVIDER_ERROR')d.providerErrors++;
       if(check.status==='AVAILABLE')break;
     }
+    return true;
   };
   const rounds=classRounds.map(r=>r.filter(c=>requested.includes(c))).filter(r=>r.length);
   const stages:[string,Interval[][]][]=[['FULL',[[full]]],['ANCHORED',anchored],['SPLIT_POINTS',splits],['BROADER',broader]];
+  if(strategy.progressiveStations){
+    const considered=new Set<number>();let stationRounds=0,stopped=false;
+    // All route nodes remain eligible. Intervals are generated on demand,
+    // bounded by admitted checks plus the first deferred atomic group.
+    const focusGaps=async()=>{
+      const best=paths().sort((a,b)=>b.reserved-a.reserved||a.changes-b.changes)[0];
+      if(!best||best.reserved===0)return true;
+      for(const gap of best.segments.filter(s=>s.type==='SELF_MANAGED')){
+        const a=nodes.findIndex(n=>n.stationCode===gap.fromStation),b=nodes.findIndex(n=>n.stationCode===gap.toStation);
+        const interval=add(a,b)!;
+        for(const classes of rounds){
+          if(!await evaluate([interval],classes))return false;
+          if(fullFound())return true;
+        }
+      }
+      return true;
+    };
+    for(const classes of rounds){if(!await evaluate([full],classes)){stopped=true;break;}if(fullFound())break;}
+    if(!fullFound()&&!stopped)stationLoop:for(let offset=0;offset<selected.length;offset+=limits.maxSplitPoints){
+      const batch=selected.slice(offset,offset+limits.maxSplitPoints);let entered=false;
+      for(const classes of rounds)for(const stop of batch){
+        session.assertActive();
+        const k=nodePosition.get(stop.sequence)!;
+        const pair=[add(0,k)!,add(k,nodes.length-1)!];
+        if(!await evaluate(pair,classes)){stopped=true;break stationLoop;}
+        considered.add(k);if(!entered){entered=true;stationRounds++;}
+        if(fullFound())break stationLoop;
+        if(!await focusGaps()){stopped=true;break stationLoop;}
+        if(fullFound())break stationLoop;
+      }
+    }
+    d.candidateIntervalsGenerated=intervals.size;
+    d.progressive={stationsEligible:selected.length,stationsConsidered:considered.size,stationsRemaining:selected.length-considered.size,stationRoundsAttempted:stationRounds,complete:!stopped&&!d.providerErrors&&!d.truncationReasons.some(r=>r==='pathStates'||r==='missingDistanceSplits')};
+  }else{
   outer:for(let round=0;round<rounds.length;round++)for(const [name,groups]of stages){
     if(!groups.length)continue;d.searchRoundsAttempted.push(`${name}:${rounds[round].join('+')}`);
     for(const group of groups){await evaluate(group,rounds[round]);if(fullFound())break outer;}
+  }
   }
   // Keep only unresolved atomic work; later groups may have supplied evidence.
   if(deferred)deferred.requests=fullFound()?[]:deferredGroups.map(({group,classes})=>
