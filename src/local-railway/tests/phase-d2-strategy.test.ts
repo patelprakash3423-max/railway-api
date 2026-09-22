@@ -5,6 +5,10 @@ import type {LocalDataset} from '../types.js';
 import type {V2Journey,V2Leg} from '../planner/v2/types.js';
 import type {AvailabilityRequest,AvailabilityResult} from '../../domain/types/availability.js';
 import {JourneyRecoveryOrchestrator,type JourneyOptions} from '../../journey/availability/journey/orchestrator.js';
+import {AvailabilityScheduler} from '../../providers/railkit/availability-scheduler.js';
+import {normalizeAvailability} from '../../providers/railkit/railkit-normalizers.js';
+import {availabilitySdkInvoked} from '../../providers/availability-observation.js';
+import {hardeningConfig} from '../../config/hardening.js';
 const date='18-11-2099',iso=(m:number)=>new Date(Date.UTC(2099,10,18,0,m)).toISOString().slice(0,16)+':00+05:30';
 type State='AVAILABLE'|'RAC'|'WAITLIST'|'NOT_AVAILABLE';
 function fixture(t:TestContext,count=1,intermediates=1){
@@ -94,4 +98,55 @@ test('D2 cancellation stops progressive work before further calls',async t=>{
  const f=fixture(t,1,20),controller=new AbortController();let calls=0;
  const provider={assertActive:()=>controller.signal.throwIfAborted(),getAvailability:async(r:AvailabilityRequest):Promise<AvailabilityResult>=>{if(++calls===12)controller.abort(new Error('cancelled'));return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state:'WAITLIST'}]};}};
  await assert.rejects(new JourneyRecoveryOrchestrator(f.db,provider).validate(f.input),/cancelled/);assert.equal(calls,12);
+});
+
+// Exercise the process-shared cache, not just a second call in one session.
+for(const count of [1,3])for(const [mode,budget] of [['QUICK',12],['STANDARD',30],['DEEP',40]] as const)
+ for(const classes of [['SL'],['SL','3A'],['ALL']])
+  for(const recoverable of [false,true])test(
+   `D2 cold/warm scope is identical: ${count} direct ${mode} ${classes} recovery=${recoverable}`,async t=>{
+ const f=fixture(t,count,recoverable?3:12);
+ const scheduler=new AvailabilityScheduler(hardeningConfig({}),()=>0);
+ let trace:AvailabilityRequest[]=[],sdkCalls=0;
+ const provider={getAvailability:async(r:AvailabilityRequest):Promise<AvailabilityResult>=>{
+  trace.push({...r});
+  return normalizeAvailability(await scheduler.execute(r,async()=>{
+   availabilitySdkInvoked();sdkCalls++;
+   // The first progressive station has useful coverage; ALL must finish its
+   // same-train gap in a later class before considering unrelated stations.
+   const usable=recoverable&&r.trainNumber==='30001'&&(
+    (r.fromStationCode==='A'&&r.toStationCode==='S2'&&r.travelClass==='SL')||
+    (r.fromStationCode==='S2'&&r.toStationCode==='B'&&r.travelClass==='3E'));
+   return {success:true,data:{availability:[{date:r.journeyDate,status:usable?'AVAILABLE':'WAITLIST'}]}};
+  }),r);
+ }};
+ const search=()=>new JourneyRecoveryOrchestrator(f.db,provider,{usableTarget:1}).validate({...f.input,mode,requestedClasses:classes});
+ const cold=await search(),coldTrace=trace;
+ const coldSdk=sdkCalls;trace=[];
+ const warm=await search();
+ assert.deepEqual(trace,coldTrace,'shared cache must not admit additional intervals/classes');
+ assert.equal(new Set(coldTrace.map(r=>JSON.stringify(r))).size,coldTrace.length,'session reuse must prevent duplicate provider work');
+ assert.ok(coldTrace.length<=budget);
+ assert.equal(cold.diagnostics.attemptedAvailabilityChecks,coldTrace.length);
+ assert.equal(warm.diagnostics.attemptedAvailabilityChecks,coldTrace.length);
+ assert.equal(cold.diagnostics.actualSdkInvocations,coldSdk);
+ assert.equal(warm.diagnostics.actualSdkInvocations,0);
+ assert.equal(warm.diagnostics.sharedCacheHits,coldTrace.length);
+ assert.equal(sdkCalls,coldSdk);
+ // Provenance necessarily differs; inventory, ranking and scope must not.
+ const inventory=(value:unknown)=>JSON.parse(JSON.stringify(value,(key,v)=>key==='evidence'?undefined:v));
+ assert.deepEqual(inventory(warm.journeys),inventory(cold.journeys));
+ for(const key of ['budgetRemaining','directExploration','directLaneBudgetUsed','indirectLaneBudgetUsed','indirectLaneStarted','sameTrainStationsConsidered','sameTrainStationsRemaining','sameTrainFullRecoveries'] as const)
+  assert.deepEqual(warm.diagnostics[key],cold.diagnostics[key],key);
+ if(classes[0]!=='ALL')assert.ok(trace.every(r=>classes.includes(r.travelClass)));
+ if(recoverable&&classes[0]==='ALL'&&mode!=='QUICK'){
+  assert.equal(cold.diagnostics.sameTrainFullRecoveries,1);
+  assert.equal(cold.diagnostics.indirectLaneStarted,false);
+ }
+});
+
+for(const maxRecoveryRequestsPerCandidate of [0,2,4])test('D2 explicit recovery cap spans early and continuation phases: '+maxRecoveryRequestsPerCandidate,async t=>{
+ const r=await run(t,r=>r.trainNumber==='30001'&&r.fromStationCode==='A'&&r.toStationCode==='S2'?'AVAILABLE':'WAITLIST',
+  {maxRecoveryRequestsPerCandidate},3,3,['ALL']);
+ for(const trainNumber of ['30001','30002','30003'])assert.ok(r.calls.filter(c=>c.trainNumber===trainNumber&&!(c.fromStationCode==='A'&&c.toStationCode==='B')).length<=maxRecoveryRequestsPerCandidate);
 });

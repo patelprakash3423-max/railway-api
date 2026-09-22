@@ -103,6 +103,27 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
           if(!await evaluate([interval],classes))return false;
           if(fullFound())return true;
         }
+        // Sample inside the gap before returning to overlapping endpoint pairs.
+        // Two stations per turn rotate the starting class round. Later passes
+        // cover every requested round, without permanently excluding stations.
+        const inner=selected.filter(s=>{const k=nodePosition.get(s.sequence)!;return k>a&&k<b;});
+        for(let pass=0;pass<rounds.length;pass++)for(let offset=0;offset<inner.length;offset+=2){
+          const classes=rounds[(offset/2+pass)%rounds.length];
+          for(const stop of inner.slice(offset,offset+2)){
+            const k=nodePosition.get(stop.sequence)!;
+            // Anchor at the uncovered journey endpoint; internal gaps use
+            // their left boundary. Generate only one interval on demand.
+            const part=b===nodes.length-1?add(k,b)!:add(a,k)!;
+            // A subinterval is independently useful: admit one class at a
+            // time instead of requiring budget for an entire class round.
+            // Endpoint pairs elsewhere retain their atomic admission rule.
+            for(const travelClass of classes){
+              if(!await evaluate([part],[travelClass]))return false;
+              considered.add(k);
+            }
+            if(fullFound())return true;
+          }
+        }
       }
       return true;
     };

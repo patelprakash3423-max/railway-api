@@ -45,5 +45,5 @@ export interface AllocationDiagnostics {
   deepWideningCandidates: number; deepWideningRequests: number;
   candidatesDeferredByAtomicCost: number; candidatesDeferredByBreadthLimit: number;
 }
-export interface ValidationOptions { /** Fair direct preferred-class pass within the existing bounded breadth pool. */ directFirst?: boolean; progressiveAllocation?: boolean; /** Evaluate other legs after a bottleneck, for journey recovery only. */ completeFailedCandidates?: boolean; budgetLimit?: number; usableTarget?: number; batchSizes?: number[]; classRounds?: TravelClass[][] }
+export interface ValidationOptions { /** Fair direct preferred-class pass within the existing bounded breadth pool. */ directFirst?: boolean; /** Internal first-round scheduling pass; retain unchecked candidates as incomplete. */ directRoundOnly?: boolean; progressiveAllocation?: boolean; /** Evaluate other legs after a bottleneck, for journey recovery only. */ completeFailedCandidates?: boolean; budgetLimit?: number; usableTarget?: number; batchSizes?: number[]; classRounds?: TravelClass[][] }
 export interface ValidationResult { journeys: ValidatedJourney[]; diagnostics: AvailabilityDiagnostics; allocationDiagnostics?: AllocationDiagnostics; plannerDiagnostics?: V2Result['diagnostics']; message: string }

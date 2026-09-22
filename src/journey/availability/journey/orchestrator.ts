@@ -68,6 +68,8 @@ export class JourneyRecoveryOrchestrator {
     const journeys: RecoveredJourney[]=[];
     const directProgress=new Map<number,RecoveryDiagnostics>();
     const recoveryAttempted=new Set<number>();
+    const recoverySpent=new Map<number,number>();
+    const recoveryCandidates=new Set<number>(),attemptedLegs=new Set<string>(),successfulLegs=new Set<string>();
     const deferredRecovery:{rank:number;minimumCost:()=>number;run:(allowance:number)=>Promise<void>;remainingCap:()=>number}[]=[];
     const budgetDeferred=new Set<number>(),targetDeferred=new Set<number>();
     const checked=new Set<number>(),fullyChecked=new Set<number>(),wholeUsable=new Set<number>();
@@ -80,12 +82,43 @@ export class JourneyRecoveryOrchestrator {
     if(!lane.length)continue;
     const directLane=lane===direct,laneBefore=session.budget.callsUsed,wholeBefore=d.wholeLegRequests;
     // Explicit selections are a hard scope; only ALL expands canonical classes.
-    const laneInput=input;
-    const validator=new AvailabilityOrchestrator(this.provider,{...this.options,directFirst:directLane,progressiveAllocation:true,completeFailedCandidates:true,usableTarget:target});
+    // Early probing requires a complete fair preferred-class pass inside the
+    // existing bounded direct pool and protected whole-leg allowance.
+    const earlyRound=directLane&&lane.length>1&&lane.length<={QUICK:3,STANDARD:5,DEEP:7}[mode]
+      &&lane.length<=session.remaining-protectedRemaining&&input.requestedClasses.some(c=>c.trim().toUpperCase()==='ALL')
+      ? [(this.options.classRounds??[['SL','3A'],['2A','CC','2S'],['1A','EC','3E']])[0][0]] : undefined;
+
     deferredRecovery.length=0;
+    const revisitRecovery=async()=>{
+    // Within this phase, rotate deferred candidates so
+    // each gets a fair turn before another turn goes to the same candidate.
+    // Atomic groups can borrow only enough to make progress. A finite sweep
+    // bound and no-progress stop also bound cache-only work.
+    for(let pass=0;pass<=session.limit&&deferredRecovery.length;pass++){
+      session.assertActive();
+      const active=deferredRecovery.filter(w=>journeys.find(j=>j.scheduleRank===w.rank)!.reservedCoverageRatio<1&&w.minimumCost()<=Math.min(session.remaining,w.remainingCap()));
+      if(!active.length)break;
+      const before=session.budget.callsUsed;
+      for(const [index,work] of active.entries()){
+        session.assertActive();
+        if(journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target)break;
+        const cost=work.minimumCost();
+        if(cost>Math.min(session.remaining,work.remainingCap()))continue;
+        const share=Math.floor(session.remaining/(active.length-index));
+        await work.run(Math.min(session.remaining,work.remainingCap(),Math.max(cost,Math.min(cap,share))));
+      }
+      if(session.budget.callsUsed===before||journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target)break;
+    }
+    };
     // Complete direct exact/recovery/revisit work before the indirect lane.
     // Phase C: revisit deferred whole-leg candidates after releasing unused reserve.
-    for(const phase of ['PROTECTED','RELEASED'] as const){
+    for(const phase of (earlyRound?['EARLY','PROMISING','PROTECTED','RELEASED']:['PROTECTED','RELEASED'])){
+    // A bounded first-round recovery turn precedes later ALL exact rounds.
+    // The complete request scope is restored before returning any fallback.
+    const laneInput=phase==='EARLY'?{...input,requestedClasses:earlyRound!}:input;
+    const validator=new AvailabilityOrchestrator(this.provider,{...this.options,directFirst:directLane,directRoundOnly:phase==='EARLY',progressiveAllocation:true,completeFailedCandidates:true,usableTarget:target});
+    if(phase==='PROMISING'){for(const rank of fullyChecked)if(!wholeUsable.has(rank))fullyChecked.delete(rank);recoveryAttempted.clear();deferredRecovery.length=0;}
+
     if(phase==='RELEASED'){
       d.recoveryReserveReleased=Math.min(protectedRemaining,session.remaining);
       protectedRemaining=0;
@@ -95,7 +128,10 @@ export class JourneyRecoveryOrchestrator {
     while(offset<lane.length){
       const stop=journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target;
       const scheduledBatch=lane.slice(offset);
-      const indexed=scheduledBatch.filter(x=>phase==='PROTECTED'||(!fullyChecked.has(x.rank)&&!recoveryAttempted.has(x.rank)));
+      const indexed=scheduledBatch.filter(x=>!journeys.some(j=>j.scheduleRank===x.rank&&j.journeyStatus.startsWith('FULLY_RESERVED'))
+        &&(phase!=='PROMISING'||journeys.some(j=>j.scheduleRank===x.rank&&j.reservedDistanceKm>0))
+        &&(phase!=='PROTECTED'||!earlyRound||!recoveryAttempted.has(x.rank))
+        &&(phase!=='RELEASED'||(!fullyChecked.has(x.rank)&&!recoveryAttempted.has(x.rank))));
       const batch=indexed.map(x=>x.candidate);
       const before=session.budget.callsUsed;
       const validated=await session.withAllowance(stop?0:Math.max(0,session.remaining-protectedRemaining),()=>validator.validate({...laneInput,plannerCandidates:batch},session));
@@ -134,37 +170,44 @@ export class JourneyRecoveryOrchestrator {
         d.legsEligibleForRecovery+=eligible.length;
         const budgetIncomplete = new Set<number>();
         let candidateCapPruned=false;
-        const recoverCandidate=!enough&&journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length<target;
+        const recoverCandidate=!enough&&journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length<target
+          &&!(phase==='EARLY'&&journeys.some(j=>j.reservedDistanceKm>0)
+            &&session.remaining<session.missingRequests(lane.flatMap(({candidate})=>candidate.segments.flatMap(l=>travelClasses
+              .filter(c=>input.supportedClassesByTrain?.[l.trainNumber]===undefined||input.supportedClassesByTrain[l.trainNumber].map(x=>x.trim().toUpperCase()).includes(c))
+              .map(travelClass=>({trainNumber:l.trainNumber,fromStationCode:l.fromStation,toStationCode:l.toStation,journeyDate:l.boardingDate,travelClass,quota:'GN' as const})))))+reserve);
         let result=assemble(whole,legs,threshold);
         // Unknown whole-leg inventory is never relabelled as a self-managed gap.
         const optimistic=result.reservedDistanceKm+eligible.reduce((n,i)=>n+legs[i].legDistanceKm,0);
         if(recoverCandidate&&eligible.length&&optimistic+1e-9<threshold*result.totalDistanceKm)d.coverageFeasibilityPruned++;
         else if(recoverCandidate&&eligible.length&&result.unknownDistanceKm===0){
-          d.candidatesSentToRecovery++;
+          if(!recoveryCandidates.has(whole.scheduleRank)){recoveryCandidates.add(whole.scheduleRank);d.candidatesSentToRecovery++;}
           recoveryAttempted.add(whole.scheduleRank);
           eligible.sort((a,b)=>legs[b].legDistanceKm-legs[a].legDistanceKm||legs[a].reservedCoverageRatio-legs[b].reservedCoverageRatio||(input.supportedClassesByTrain?.[legs[a].trainNumber]?.length??8)-(input.supportedClassesByTrain?.[legs[b].trainNumber]?.length??8)||a-b);
           // Leave at least one request for another candidate; allowance is never a new budget.
           const fairShare=Math.floor(Math.max(0,session.remaining-1)/Math.max(1,recoveryCandidatesRemaining));
-          const allowance=Math.min(cap,fairShare);
+          const allowance=Math.min(cap,fairShare,phase==='EARLY'?Math.min(protectedRemaining,2*earlyRound!.length):Infinity,
+            this.options.maxRecoveryRequestsPerCandidate===undefined?Infinity:Math.max(0,cap-(recoverySpent.get(whole.scheduleRank)??0)));
           recoveryCandidatesRemaining=Math.max(0,recoveryCandidatesRemaining-1);
           const workByLeg=new Map<number,DeferredRecoveryWork>();
-          let candidateSpent=0;
+          let candidateSpent=recoverySpent.get(whole.scheduleRank)??0;
           const runRecovery=async(allowance:number)=>{
             const recoveryBefore=session.budget.callsUsed;
             await session.withAllowance(allowance,async()=>{
               for(const i of eligible){
                 if(legs[i].reservedCoverageRatio>=1||(workByLeg.has(i)&&!workByLeg.get(i)!.requests.length))continue;
-                const firstAttempt=!workByLeg.has(i);
+                const legKey=`${whole.scheduleRank}:${i}`;
+                const firstAttempt=!attemptedLegs.has(legKey);attemptedLegs.add(legKey);
                 const deferred:DeferredRecoveryWork={requests:[]};
                 workByLeg.set(i,deferred);
                 if(firstAttempt){d.legsRecoveryAttempted++;d.bottleneckLegsEvaluated++;}
                 const l=whole.scheduleCandidate.segments[i];
                 const recovered=await recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:laneInput.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,deferred,{progressiveStations:directLane});
+                if(phase==='EARLY'&&recovered.diagnostics.progressive)recovered.diagnostics.progressive.complete=false;
                 if(directLane)directProgress.set(whole.scheduleRank,recovered.diagnostics);
                 const best=recovered.best;
                 // Consume the best evidence even below the standalone leg threshold:
                 // eligibility belongs to the complete journey, not individual legs.
-                if(best.reservedDistanceKm>0&&legs[i].reservedDistanceKm===0)d.legsRecoverySucceeded++;
+                if(best.reservedDistanceKm>0&&!successfulLegs.has(legKey)){successfulLegs.add(legKey);d.legsRecoverySucceeded++;}
                 legs[i]={...legs[i],recoveryStatus:best.recoveryStatus,segments:best.segments,reservedDistanceKm:best.reservedDistanceKm,reservedCoverageRatio:best.reservedCoverageRatio,unknownDistanceKm:recovered.diagnostics.providerErrors&&best.reservedCoverageRatio<1?best.selfManagedDistanceKm:0};
                 if(legs[i].unknownDistanceKm)legs[i].segments=best.segments.filter(isReserved);
                 d.truncated ||= recovered.diagnostics.truncated;
@@ -177,9 +220,9 @@ export class JourneyRecoveryOrchestrator {
               }
             });
             const recoveryCalls=session.budget.callsUsed-recoveryBefore;
-            candidateSpent+=recoveryCalls;
+            candidateSpent+=recoveryCalls;recoverySpent.set(whole.scheduleRank,candidateSpent);
             d.recoveryIntervalRequests+=recoveryCalls;
-            if(phase==='PROTECTED'){
+            if(phase!=='RELEASED'){
               const used=Math.min(protectedRemaining,recoveryCalls);
               protectedRemaining-=used;d.recoveryReserveUsed+=used;
             }
@@ -207,30 +250,21 @@ export class JourneyRecoveryOrchestrator {
         }
         if(candidateCapPruned)d.candidateRecoveryBudgetPruned++;
         const previous=journeys.findIndex(j=>j.scheduleRank===whole.scheduleRank);
+        // Keep early reserved evidence if later exact rounds run out of budget.
+        // Unchecked ALL classes remain unknown, never a confirmed failure.
+        if(previous>=0&&journeys[previous].reservedDistanceKm>result.reservedDistanceKm){
+          const prior=journeys[previous];
+          const retained=prior.legs.map((leg,i)=>({...leg,unknownDistanceKm:legs[i].unknownDistanceKm>0?leg.legDistanceKm-leg.reservedDistanceKm:leg.unknownDistanceKm,
+            segments:legs[i].unknownDistanceKm>0?leg.segments.filter(isReserved):leg.segments}));
+          result=assemble(whole,retained,threshold);
+        }
         if(previous<0)journeys.push(result);else journeys[previous]=result;
       }
       offset+=scheduledBatch.length;
     }
+    if(phase==='PROMISING')await revisitRecovery();
     }
-    // Whole-leg reserve release has priority. Rotate deferred candidates so
-    // each gets a fair turn before another turn goes to the same candidate.
-    // Atomic groups can borrow only enough to make progress. A finite sweep
-    // bound and no-progress stop also bound cache-only work.
-    for(let pass=0;pass<=session.limit&&deferredRecovery.length;pass++){
-      session.assertActive();
-      const active=deferredRecovery.filter(w=>journeys.find(j=>j.scheduleRank===w.rank)!.reservedCoverageRatio<1&&w.minimumCost()<=Math.min(session.remaining,w.remainingCap()));
-      if(!active.length)break;
-      const before=session.budget.callsUsed;
-      for(const [index,work] of active.entries()){
-        session.assertActive();
-        if(journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target)break;
-        const cost=work.minimumCost();
-        if(cost>Math.min(session.remaining,work.remainingCap()))continue;
-        const share=Math.floor(session.remaining/(active.length-index));
-        await work.run(Math.min(session.remaining,work.remainingCap(),Math.max(cost,Math.min(cap,share))));
-      }
-      if(session.budget.callsUsed===before||journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target)break;
-    }
+    await revisitRecovery();
     const laneUsed=session.budget.callsUsed-laneBefore;
     if(directLane){d.directLaneBudgetUsed=laneUsed;d.directWholeLegChecks=d.wholeLegRequests-wholeBefore;}
     else {d.indirectLaneBudgetUsed=laneUsed;d.indirectLaneStarted=lane.some(x=>journeys.find(j=>j.scheduleRank===x.rank)?.wholeLegValidation.legs.some(l=>l.checks.length));}

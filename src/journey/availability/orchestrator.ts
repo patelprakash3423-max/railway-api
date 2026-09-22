@@ -105,12 +105,21 @@ export class AvailabilityOrchestrator {
       const unresolved=(s:State)=>s.checks.length-usableLegs(s);
       const ordered=[...states].sort((a,b)=>Number(usableLegs(b)>0)-Number(usableLegs(a)>0)||unresolved(a)-unresolved(b)||a.rank-b.rank);
       // A bounded completion lane follows evidence priority, then schedule rank.
-      // Finish canonical pending classes for one candidate before moving on.
-      for(const s of ordered){
+      // Direct ALL candidates share rounds; other lanes retain completion order.
+      // Admit a bounded later-round cohort with enough room for its remaining
+      // exact classes. Round fairness must not turn into unbounded breadth.
+      const pendingLeader=ordered.find(s=>!done(s));
+      const pendingCost=pendingLeader?missing(pendingLeader,rounds.flat()):0;
+      const cohort=ordered.filter(s=>!done(s)).slice(0,Math.max(1,Math.floor(session.remaining/Math.max(1,pendingCost))));
+      const completionTurns=this.options.directRoundOnly?[]:this.options.directFirst&&all
+        ? [...rounds.flatMap(round=>cohort.map(s=>({s,rounds:[round]}))),...ordered.filter(s=>!cohort.includes(s)).map(s=>({s,rounds}))]
+        : ordered.map(s=>({s,rounds}));
+      const consideredCompletion=new Set<State>();
+      for(const {s,rounds:pendingRounds} of completionTurns){
         if(states.filter(isUsable).length>=target)break;
         if(done(s))continue;
-        allocation.completionCandidatesConsidered++;
-        for(const round of rounds)for(const c of round){
+        if(!consideredCompletion.has(s)){consideredCompletion.add(s);allocation.completionCandidatesConsidered++;}
+        for(const round of pendingRounds)for(const c of round){
           if(done(s))break;
           const before=budget.callsUsed,checks=s.checks.reduce((n,x)=>n+x.size,0);
           await attempt(s,c);
