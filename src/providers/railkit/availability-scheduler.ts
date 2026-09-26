@@ -1,3 +1,8 @@
+import {AvailabilityObservations} from '../observations/cache.js';
+import {SqliteAvailabilityObservationStore} from '../observations/sqlite-store.js';
+import {AvailabilityFreshnessPolicy} from '../observations/freshness.js';
+import {availabilityStateConfig} from '../../config/availability-state.js';
+import {attachObservation,observationEnvelope,type ObservationMetadata} from '../observations/model.js';
 import {providerIdentityObserved,type ProviderIdentityEvidence} from '../availability-evidence.js';
 import {availabilityRequestKey} from '../../utils/availability-key.js';
 import {AsyncLocalStorage} from 'node:async_hooks';
@@ -11,9 +16,9 @@ import {normalizeAvailability} from './railkit-normalizers.js';
 import type {AvailabilityRequest} from '../../domain/types/availability.js';
 
 type CacheKind='INVENTORY'|'UNSUPPORTED_CLASS';
-type CachedEvidence={expires:number;value:unknown};
+type CachedEvidence={expires:number;value:unknown;observation?:ObservationMetadata};
 type Waiter={signal?:AbortSignal;run:ReturnType<typeof AsyncLocalStorage.snapshot>;resolve:(v:unknown)=>void;reject:(e:unknown)=>void;cleanup:()=>void;queuedAt:number;waited:boolean};
-type Entry={identityEvidence?:ProviderIdentityEvidence;timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
+type Entry={observation?:ObservationMetadata;persistent?:boolean;observedAt?:number;identityEvidence?:ProviderIdentityEvidence;timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
 /** One default instance covers every raw/normalized availability SDK entry point.
  * Queue owners rotate after each start. Running calls are never preempted.
  * Aborted/time-out SDKs retain their slots until the SDK promise actually settles:
@@ -26,15 +31,17 @@ export class AvailabilityScheduler {
  private queue:Entry[]=[];
  // One cache mechanism with independent retention/capacity policies.
  private caches:Record<CacheKind,Map<string,CachedEvidence>>={INVENTORY:new Map(),UNSUPPORTED_CLASS:new Map()};
- constructor(private readonly config:HardeningConfig,private readonly now=Date.now){this.quota=new ProviderQuota(config,now);}
+ constructor(private readonly config:HardeningConfig,private readonly now=Date.now,private readonly observations?:AvailabilityObservations){this.quota=new ProviderQuota(config,now);}
+ closeObservations(){this.observations?.store.close();}
  execute(request:AvailabilityRequest,invoke:()=>Promise<unknown>):Promise<unknown>{
   const signal=availabilitySignal();signal?.throwIfAborted();
   const key=availabilityRequestKey(request);
   for(const kind of ['INVENTORY','UNSUPPORTED_CLASS'] as const){
    const cache=this.caches[kind],cached=cache.get(key);
-   if(cached&&cached.expires>this.now()){
+   if(cached&&cached.expires>this.now()&&(!cached.observation||cached.observation.observedAt<=this.now())){
     availabilityMetric(kind==='INVENTORY'?'sharedCacheHits':'unsupportedEvidenceCacheHits');
-    return Promise.resolve(structuredClone(cached.value));
+    if(kind==='INVENTORY')availabilityMetric('hotCacheHits');
+    return Promise.resolve(attachObservation(structuredClone(cached.value),cached.observation));
    }
    if(cached)cache.delete(key);
   }
@@ -85,9 +92,18 @@ export class AvailabilityScheduler {
    // fetch signal with the shared controller. A departed waiter cannot kill peers.
    const task=first.run(()=>inAvailabilityScope(entry.controller.signal,async()=>{
     entry.controller.signal.throwIfAborted();
+    if(this.observations){
+     const lookup=await this.observations.lookup(entry.request,this.now);
+     entry.controller.signal.throwIfAborted();
+     if(lookup.state==='FRESH'){
+      entry.persistent=true;entry.observation={observedAt:lookup.observation.observedAt,freshUntil:lookup.freshUntil};
+      return observationEnvelope(lookup.observation.result);
+     }
+    }
+    entry.observedAt=this.now();
     return entry.invoke();
    },{onResponse:status=>{entry.httpStatus=status;},onFailure:category=>{entry.transportFailure=category;}}));
-   void task.then(value=>{
+   void task.then(async value=>{
     if(entry.controller.signal.aborted)return;
     // RailKit can return a success-shaped body even for HTTP 429/5xx.
     // Preserve structural transport evidence without guessing from error text.
@@ -111,7 +127,12 @@ export class AvailabilityScheduler {
     if(normalized.providerState==='SUCCESS'&&matching.length===1&&
        ['AVAILABLE','RAC','WAITLIST','NOT_AVAILABLE'].includes(matching[0].state)&&
        !(matching[0].canBook===false&&['AVAILABLE','RAC'].includes(matching[0].state))){
-     this.remember('INVENTORY',entry.key,value);
+     if(this.observations&&!entry.persistent){
+      const observation=await first.run(()=>this.observations!.remember(normalized,entry.observedAt!));
+      if(entry.controller.signal.aborted)return;
+      if(observation)entry.observation={observedAt:observation.observedAt,freshUntil:this.observations.policy.freshUntil(entry.request.journeyDate,observation.observedAt,this.now())};
+     }
+     this.remember('INVENTORY',entry.key,value,entry.observation);
     }else if(normalized.failureCategory==='UNSUPPORTED_CLASS'){
      this.remember('UNSUPPORTED_CLASS',entry.key,value);
      first.run(()=>availabilityMetric('providerUnsupportedResponses'));
@@ -129,7 +150,7 @@ export class AvailabilityScheduler {
    });
   }
  }
- private remember(kind:CacheKind,key:string,value:unknown){
+ private remember(kind:CacheKind,key:string,value:unknown,observation?:ObservationMetadata){
   const cache=this.caches[kind],time=this.now();
   const ttl=kind==='INVENTORY'?this.config.providerCacheTtlMs:this.config.unsupportedCacheTtlMs;
   const limit=kind==='INVENTORY'?this.config.providerCacheEntries:this.config.unsupportedCacheEntries;
@@ -137,13 +158,18 @@ export class AvailabilityScheduler {
   // Reads do not refresh TTL or insertion order; eviction is deterministic FIFO.
   this.caches.INVENTORY.delete(key);this.caches.UNSUPPORTED_CLASS.delete(key);
   while(cache.size>=limit)cache.delete(cache.keys().next().value!);
-  cache.set(key,{expires:time+ttl,value:structuredClone(value)});
+  const expires=Math.min(time+ttl,observation?.freshUntil??Infinity);
+  if(expires>time)cache.set(key,{expires,value:structuredClone(value),observation});
  }
  private settle(entry:Entry,value?:unknown,error?:unknown){
   this.remove(entry);
-  for(const w of entry.waiters){if(entry.identityEvidence)w.run(()=>providerIdentityObserved(entry.identityEvidence!));this.finishWait(w);if(error instanceof PublicError&&error.code==='PROVIDER_TIMEOUT')w.run(()=>availabilityMetric('providerTimeouts'));if(error!==undefined)w.reject(error);else w.resolve(structuredClone(value));}
+  for(const w of entry.waiters){if(entry.identityEvidence)w.run(()=>providerIdentityObserved(entry.identityEvidence!));this.finishWait(w);if(error instanceof PublicError&&error.code==='PROVIDER_TIMEOUT')w.run(()=>availabilityMetric('providerTimeouts'));if(error!==undefined)w.reject(error);else w.resolve(attachObservation(structuredClone(value),entry.observation));}
   entry.waiters.clear();
  }
 }
 let shared:AvailabilityScheduler|undefined;
-export function processAvailabilityScheduler(){return shared??=new AvailabilityScheduler(hardeningConfig());}
+export function processAvailabilityScheduler(){
+ if(!shared){const config=availabilityStateConfig();shared=new AvailabilityScheduler(hardeningConfig(),Date.now,new AvailabilityObservations(new SqliteAvailabilityObservationStore(config),new AvailabilityFreshnessPolicy(config.freshnessMs)));}
+ return shared;
+}
+export function closeProcessAvailabilityObservations(){shared?.closeObservations();}

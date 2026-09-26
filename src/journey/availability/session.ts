@@ -16,7 +16,7 @@ export class AvailabilitySession {
   private readonly cache = new Map<string, InventoryCheck>();
   private readonly pending = new Map<string, Promise<InventoryCheck>>();
   private readonly counts: Omit<SessionStatistics,'availabilityBudgetLimit'|'availabilityRequestsUsed'|'budgetRemaining'|keyof ProviderCallDiagnostics> = { ...emptyAvailabilityMetrics(),availabilityCacheHits:0,classChecksByClass:{},availableResponses:0,racResponses:0,waitlistResponses:0,unavailableResponses:0,unsupportedClassResponses:0,providerErrors:0,providerErrorCategories:{} };
-  constructor(private readonly provider: AvailabilityProvider, readonly limit: number, readonly providerBudget = new AvailabilityProviderBudget()) { this.budget = new SearchBudget({ maxAvailabilityCalls:limit }); }
+  constructor(private readonly provider: AvailabilityProvider, readonly limit: number, readonly providerBudget = new AvailabilityProviderBudget(),private readonly now=Date.now) { this.budget = new SearchBudget({ maxAvailabilityCalls:limit }); }
   private allowanceEnd = Infinity;
   private readonly skippedClasses = new Set<string>();
   private configurationChecked = false;
@@ -46,8 +46,8 @@ export class AvailabilitySession {
   assertActive(): void { this.provider.assertActive?.(); }
   get logicalRemaining() { return Math.max(0, Math.min(this.limit, this.allowanceEnd) - this.budget.callsUsed); }
   get remaining() { return this.providerBudget.stopped?0:this.logicalRemaining; }
-  peekKey(key: string) { return this.cache.get(key); }
-  hasKey(key: string) { return this.cache.has(key) || this.pending.has(key); }
+  peekKey(key: string) { const hit=this.cache.get(key);if(hit?.rawDetails?.observation&&(this.now()>=hit.rawDetails.observation.freshUntil||hit.rawDetails.observation.observedAt>this.now())){this.cache.delete(key);return undefined;}return hit; }
+  hasKey(key: string) { return !!this.peekKey(key) || this.pending.has(key); }
   missingRequests(requests: AvailabilityRequest[]) { return new Set(requests.map(requestKey).filter(key=>!this.hasKey(key))).size; }
   canAfford(requests: AvailabilityRequest[]) { return this.missingRequests(requests) <= this.remaining; }
   statistics(): SessionStatistics { return { ...this.counts, ...this.providerBudget.statistics(), classChecksByClass:{...this.counts.classChecksByClass},providerErrorCategories:{...this.counts.providerErrorCategories},availabilityBudgetLimit:this.limit,availabilityRequestsUsed:this.budget.callsUsed,attemptedAvailabilityChecks:this.budget.callsUsed,cacheHits:this.counts.availabilityCacheHits,unsupportedClassSkips:this.skippedClasses.size,budgetRemaining:this.logicalRemaining }; }
@@ -55,7 +55,7 @@ export class AvailabilitySession {
     this.assertActive();
     this.counts.logicalAvailabilityChecks++;
     this.checkConfiguration();
-    const r={...request},key=requestKey(r),hit=this.cache.get(key),pending=this.pending.get(key);
+    const r={...request},key=requestKey(r),hit=this.peekKey(key),pending=this.pending.get(key);
     if(hit||pending){
       this.counts.availabilityCacheHits++;
       const cached=hit??await pending!;
@@ -76,6 +76,7 @@ export class AvailabilitySession {
         this.counts[key]+=amount;if(key==='providerTimeouts')timeoutObserved=true;
         if(key==='sharedInflightHits')source='SHARED_INFLIGHT';
         if(key==='sharedCacheHits')source='SHARED_CACHE';
+        if(key==='persistentCacheHits')source='PERSISTENT_CACHE';
         if(key==='unsupportedEvidenceCacheHits')source='UNSUPPORTED_EVIDENCE_CACHE';
       },()=>observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;sdkInvoked=true;source='FRESH_PROVIDER';},()=>withAvailabilityProviderBudget(this.providerBudget,()=>this.provider.quotaAccounting==='SDK_INVOCATION'||this.provider.providerCallAccounting==='SCOPED'?this.provider.getAvailability({...r}):invokeAvailabilityProvider(()=>{},()=>this.provider.getAvailability({...r})))))));}catch(error){
         if (error instanceof ProviderConfigurationError) {

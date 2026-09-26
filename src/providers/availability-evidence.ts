@@ -5,8 +5,9 @@ export const identityPresenceFields=['providerTrainIdentityPresent','providerFro
 export type ProviderIdentityEvidence=Record<typeof identityPresenceFields[number],boolean>&{
  providerIdentityValidation:'VALIDATED'|'REJECTED'|'NOT_PROVIDED'|'NOT_EVALUATED';
 };
-export type AvailabilityEvidenceSource='FRESH_PROVIDER'|'SHARED_INFLIGHT'|'SHARED_CACHE'|'UNSUPPORTED_EVIDENCE_CACHE'|'SEARCH_LOCAL_CACHE'|'NOT_OBSERVED';
+export type AvailabilityEvidenceSource='FRESH_PROVIDER'|'SHARED_INFLIGHT'|'SHARED_CACHE'|'UNSUPPORTED_EVIDENCE_CACHE'|'SEARCH_LOCAL_CACHE'|'NOT_OBSERVED'|'PERSISTENT_CACHE';
 export interface AvailabilityEvidence extends ProviderIdentityEvidence {
+ observedAt?:number;freshUntil?:number;
  trainNumber:string;from:string;to:string;requestedDate:string;travelClass:string;quota:'GN';
  resultStatus:string;availabilityText?:string;canBook:boolean|'ABSENT';
  matchingAvailabilityRows:number|null;exactRequestedDateFound:boolean|null;
@@ -37,7 +38,7 @@ export function availabilityEvidence(request:AvailabilityRequest,check:{status:s
   resultStatus:check.status,...safeIdentityEvidence(identity??raw?.identityEvidence),
   ...(safeAvailabilityText(day?.availabilityText)?{availabilityText:safeAvailabilityText(day!.availabilityText)}:{}),
   canBook:typeof day?.canBook==='boolean'?day.canBook:'ABSENT',matchingAvailabilityRows:rows?.length??null,exactRequestedDateFound:rows?rows.length>0:null,
-  evidenceSource:source,sdkInvokedForCheck:sdkInvoked,
+  ...(raw?.observation?raw.observation:{}),evidenceSource:source,sdkInvokedForCheck:sdkInvoked,
   ...(failure&&(providerFailureCategories.includes(failure as ProviderFailureCategory)||failure==='PROVIDER_UNAVAILABLE')?{failureCategory:failure as ProviderFailureCategory|'PROVIDER_UNAVAILABLE'}:{})};
 }
 export function emitAvailabilityEvidence(evidence:AvailabilityEvidence):void {

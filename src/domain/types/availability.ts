@@ -22,6 +22,8 @@ export interface AvailabilityDay {
   canBook?: boolean;
 }
 export interface AvailabilityResult {
+  /** Internal freshness metadata, never inferred from an untrusted provider envelope. */
+  observation?:{observedAt:number;freshUntil:number};
   /** Internal provider identity observability; never serialized into journey responses. */
   identityEvidence?: ProviderIdentityEvidence;
   request: AvailabilityRequest;

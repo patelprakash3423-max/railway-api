@@ -1,3 +1,4 @@
+import {closeProcessAvailabilityObservations} from '../providers/railkit/availability-scheduler.js';
 import {ProtectedJourneyService} from './services/protected-journey-service.js';
 import {hardeningConfig} from '../config/hardening.js';
 import {installAvailabilityAbortTransport} from '../providers/railkit/availability-abort.js';
@@ -23,7 +24,7 @@ try {
     if (shuttingDown) return;
     shuttingDown = true;
     jsonLogger({ level: 'info', event: 'api_stopping' });
-    void closeApiServer(server).then(()=>database.close()).catch(() => { process.exitCode = 1; });
+    void closeApiServer(server).then(()=>{closeProcessAvailabilityObservations();database.close();}).catch(() => { process.exitCode = 1; });
   };
   process.once('SIGINT', shutdown); process.once('SIGTERM', shutdown);
 } catch(error) { jsonLogger({ level: 'error', event: 'api_start_failed', message: error instanceof PublicError?error.message:'Check API environment configuration.' }); process.exitCode = 1; }

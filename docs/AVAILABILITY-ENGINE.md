@@ -4,7 +4,7 @@ Audit date: 2026-09-23. Scope: the current working tree, including the existing 
 
 ## Read this before changing availability discovery
 
-This is both a record of **current behavior** and the **required target design**. Sections labelled target/proposed are not claims that the feature already exists. **Phase 1 is now implemented:** per-search provider admission/accounting and the configurable maximum of 300. Redis, persistent observations, adaptive freshness and dynamic EXACT_MATRIX/ADAPTIVE_GRAPH selection remain **not implemented**. The audited descriptions below are the baseline where the Phase 1 update explicitly supersedes them.
+This is both a record of **current behavior** and the **required target design**. Sections labelled target/proposed are not claims that the feature already exists. **Phase 1 is now implemented:** per-search provider admission/accounting and the configurable maximum of 300. **Phase 2A is now implemented:** a separate SQLite latest-observation store and centralized configurable freshness contract. Redis, background refresh and dynamic EXACT_MATRIX/ADAPTIVE_GRAPH selection remain **not implemented**. The original audit sections below are historical baseline findings where the Phase 1 and Phase 2A updates explicitly supersede them.
 
 The target production policy is **at most 300 actual uncached availability provider requests per user search**, shared across all trains and search stages. The executable now independently enforces that provider ceiling. The earlier 32,768-search / 8,192-candidate limits remain as defensive logical-check ceilings, not provider-call allowances; adaptive scheduling has not replaced them.
 
@@ -40,6 +40,84 @@ Existing attemptedAvailabilityChecks/availabilityRequestsUsed, budgetLimit/Used/
 Known scope/risk: production V2 and the journey CLI are covered. Raw playground calls outside a search context retain process quota only; they are not V2 searches. Custom adapters must honor the instrumentation contract. SDK changes that replace fetch or introduce transport-internal redirect/retry behavior need renewed transport tests; this layer does not claim provider-side billing telemetry. Default burst quota (120 per ten minutes) and deadlines may stop a search below 300. No Phase 2 scheduling changes are included.
 
 Focused offline regressions in src/tests/availability-provider-budget.test.ts cover small/default hard caps, final-slot concurrency, cache/unsupported reuse, shared followers, ownership transfer, independent searches, quota rollback, thrown attempts, extra fetch attempts, cross-phase scope and partial evidence. Large logical-matrix regressions use explicitly cache-only fixture observations so they preserve exploration/path assertions without implying thousands of allowed external requests. Cold requests are covered by the mocked RailKit transport tests.
+
+## Implemented Phase 2A: persistent latest observations and freshness
+
+Implemented 2026-09-26 from a verified clean tree at 9e278b7 (Phase 1 provider budget). The provider-budget implementation and gate are unchanged. This phase adds evidence reuse and freshness; it does not add Redis, history writes, background refresh, adaptive graph/mode selection, prewarming, ranking changes or deployment. The user's Phase 2A scope supersedes the ordering in the original roadmap below.
+
+### Database decision and lifecycle
+
+The timetable uses built-in node:sqlite DatabaseSync, schema v2, with deliberate import migrations and production read-only opening. Deployment provisioning checks its SHA-256 and can replace the immutable artifact. It is unsuitable for mutable availability records. No existing Redis service/client, ORM, writable availability store or persistent deployment volume was declared in the repository.
+
+The new backend uses the same built-in SQLite technology in a **separate** lazy-opened writable file: AVAILABILITY_STATE_DB_PATH, default data/availability-state/observations.sqlite. Parent directories are created on first use. SQLite and sidecars are already gitignored. The state schema has its own application_id (0x41564f42) and user_version=1; it never runs timetable migrations. The same resolved timetable path, Windows case aliases and existing symlink/hardlink aliases are refused. An existing unrelated/timetable SQLite schema is rejected before applying write PRAGMAs or DDL. Schema initialization is transactional. API shutdown closes the store after requests drain.
+
+The default process AvailabilityScheduler receives this store through AvailabilityObservations. Explicitly constructed schedulers accept that facade as an optional dependency, allowing isolated in-memory/offline fixtures and alternative backends. The backend-neutral AvailabilityObservationStore interface exposes getLatest, upsertLatest, cleanup and close; reads/writes support synchronous SQLite or asynchronous future implementations. No journey algorithm contains SQLite persistence calls.
+
+A writable **persistent volume** must be mounted/configured by the operator to preserve observations across deployment replacement. The default relative path alone does not provision durability on ephemeral hosting. Losing the state file produces ordinary cache misses. Opening/operation failures fail open through the budgeted provider path. Nothing in this phase deploys or provisions a volume.
+
+### Canonical identity and schema
+
+Identity key: JSON array of namespace railkit:availability:v1 plus train number, from station, to station, boarding journey date, canonical class and quota. Train numbers are trimmed five-character codes with leading zeroes preserved; station/class/quota codes are trimmed and uppercased; equivalent valid ISO/day-first dates canonicalize to DD-MM-YYYY using the existing availability key rules. Route/date/class/quota fields never collapse. The internal store can isolate other quota codes; the public API and provider request validation remain GN-only. Version v1 identifies the adapter/evidence contract and must change if stored evidence interpretation changes.
+
+availability_latest has one primary-key row per identity:
+
+- identity_key, namespace, train_number, from_station, to_station, journey_date, class_code, quota;
+- status (AVAILABLE, RAC, WAITLIST or NOT_AVAILABLE only), observed_at and journey_end;
+- evidence_json (at most 8,192 characters), created_at and updated_at;
+- indexes on observation age/identity and journey_end.
+
+The JSON uses the existing normalized AvailabilityResult/AvailabilityDay model, with the canonical identity and schema namespace. It retains only the requested-date row, safe availability/status text, derived available/WL counts/type, explicit canBook when present, validated INR fare components, and D1 provider-identity presence/validation flags. Absent identity/bookability stays absent. Arbitrary train names, prediction fields, provider messages, full raw envelopes, headers and credentials are not persisted. Provider counts are reconstructed by the existing normalizer, not a new inventory parser.
+
+Both writes and reads validate this allowlisted model. Reads additionally check JSON identity/status/timestamps against SQL columns and the requested identity. Invalid JSON, conflicting fields/counts, rejected identity, ambiguous date rows, invalid versions, provider failures and AVAILABLE/RAC with canBook=false cannot establish reusable evidence. Success-shaped records with transport/failure categories are rejected. Corruption is reported as a safe read-error counter and falls through; errors are never synthesized as WAITLIST or NOT_AVAILABLE.
+
+UPSERT only replaces a row when the incoming observed_at is **strictly newer**. Equal timestamps keep the existing record; older/slower observations cannot overwrite newer ones. created_at is preserved; updated_at records write time. observedAt conservatively uses the provider-dispatch start time after persistent lookup, rather than refresh completion or cache-read time. Future timestamps are not fresh. Failed provider refreshes never replace latest inventory or renew its timestamp.
+
+### Centralized freshness contract
+
+AvailabilityFreshnessPolicy uses the boarding journeyDate, observedAt and an injected current clock. Date-only inventory has no departure-time field: lead time is measured to **00:00 Asia/Kolkata on the boarding date**. Same-day records use the near-journey band and expire no later than the end of that Indian calendar day; a past boarding date is never current cache evidence. This does not assert a train's actual departure time or booking eligibility after departure.
+
+| Lead time to boarding-date midnight | Default maximum observation age | Configuration |
+| --- | --- | --- |
+| More than 30 days | 12 hours | AVAILABILITY_FRESHNESS_OVER_30_DAYS_MS |
+| More than 15, at most 30 days | 6 hours | AVAILABILITY_FRESHNESS_OVER_15_DAYS_MS |
+| More than 7, at most 15 days | 3 hours | AVAILABILITY_FRESHNESS_OVER_7_DAYS_MS |
+| At least 48 hours, at most 7 days | 1 hour | AVAILABILITY_FRESHNESS_OVER_2_DAYS_MS |
+| Under 48 hours, including the boarding day | 30 minutes | AVAILABILITY_FRESHNESS_NEAR_MS |
+
+Exactly 30/15/7 days enters the lower-age band; exactly 48 hours still uses one hour, with the next millisecond using 30 minutes. An observation is stale at age equal to its maximum, not one millisecond later. Configuration follows existing positive safe-integer conventions; TTLs are bounded to one day and invalid/zero/negative values fail validation. All inventory freshness TTL values live in the centralized configuration.
+
+freshUntil is also bounded by upcoming shorter-band transitions and the end of the journey date. Hydrating the hot cache uses the minimum of its existing TTL and remaining observation freshness. Hits never renew observedAt/freshUntil. Session cache get/peek/rehydration checks discard expired or future-dated observation-backed entries. Cached evidence is fresh at lookup according to policy, not a guarantee that provider inventory cannot subsequently change; there is no periodic revalidation during path solving. Internal normalized results and provenance logs carry observedAt/freshUntil, and persistent reuse is labelled PERSISTENT_CACHE rather than FRESH_PROVIDER. Public journey status semantics remain unchanged.
+
+### Integration, deduplication and Phase 1 accounting
+
+The exact order is search-local reuse -> existing hot INVENTORY/UNSUPPORTED_CLASS cache -> existing scheduler inflight ownership/queue -> persistent lookup -> Phase 1 admission -> provider. Persistence is **inside** the existing owner instead of ahead of inflight registration. Concurrent identical misses therefore share the same lookup/fetch/write; they do not each invoke RailKit. Persistence work occupies the existing bounded scheduler slot and shares its cancellation/deadline. Cancellation is rechecked after lookup and before provider dispatch; cancelled work cannot hydrate/publish late hot evidence.
+
+Persistent lookup explicitly yields FRESH, STALE or MISS. FRESH returns reconstructed, validated normalized evidence with zero provider calls. STALE/MISS/read-error continues to the unchanged provider gate. A valid provider response is normalized, eligible evidence is UPSERTed, then the hot cache is populated and waiters receive the result. The hot inventory cache remains 15 seconds / 500 entries by default; the separate unsupported cache remains 15 minutes / 1,000 entries. Unsupported responses and generic errors are not written to latest inventory.
+
+Read/open/schema/lock/corruption failures increment a safe counter and continue to provider admission. Write/cleanup failures increment the write-error counter and retain the valid provider result for this request. SQLite's default busy timeout is 25 ms (configurable 1..1,000 ms), so lock contention cannot cause an unbounded synchronous wait. No database error message/path is exposed in API diagnostics. An asynchronous future backend must also honor bounded operation latency/cancellation; SQLite is the only implemented backend.
+
+Phase 1 remains independent: a persistent hit costs zero; a miss/stale/error followed by an admitted provider attempt costs one; shared followers cost zero additional calls; failed dispatched attempts still count. The 300 search cap, process quotas, concurrency limits and existing controlled exhaustion remain in force. Exhaustion cannot be bypassed by storage failure and does not make stale evidence current.
+
+### Storage bounds, history and diagnostics
+
+AVAILABILITY_STATE_MAX_ROWS defaults to 100,000 (maximum 1,000,000); each write enforces this bound by evicting oldest observations deterministically. AVAILABILITY_STATE_RETENTION_MS defaults to seven days (maximum 90 days). Successful writes opportunistically run cleanup at most once per minute, deleting records whose boarding day has ended or whose observation is older than retention. cleanup(now) is also an explicit maintenance operation with an injected clock. Cold stores have no worker: expired rows can remain physically present until a later write/maintenance call, but can never be returned as fresh.
+
+SQLite uses WAL, short transactions, a 100-page auto-checkpoint, a 1 MiB retained journal target and a 65,536-page database limit (normally 256 MiB with 4 KiB pages). Full-database/lock failures fail open. Deletes free pages for reuse rather than automatically shrinking the file. The main-file page limit and row/payload caps bound normal storage growth; WAL size can temporarily exceed its retention target during active readers, so long-lived external readers and filesystem capacity remain operational concerns. No background worker or automatic VACUUM is introduced.
+
+History is **design-only**: a future append-only table could use observation_id plus identity_key, observed_at and the same whitelisted evidence, with independent retention/deduplication. It may support freshness tuning, operational analysis and refresh prioritization. No history writes or analytics subsystem exists here; history must never be a current-availability lookup or produce predictive seat claims.
+
+New API/completion diagnostics:
+
+- hotCacheHits: existing shared inventory cache hits (compatible with sharedCacheHits); excludes local reuse and unsupported hits.
+- persistentCacheHits: FRESH persistent owner lookups.
+- persistentCacheMisses: absent-record lookups.
+- persistentCacheStale: valid but expired/future-dated observations.
+- persistentCacheReadErrors: failed/invalid reads, used instead of also incrementing misses.
+- persistentCacheWriteErrors: failed latest writes or opportunistic cleanup.
+
+Owner metrics are not multiplied across inflight followers. All existing local/shared/unsupported metrics and Phase 1 logical/provider/budget diagnostics remain. These layer counters must not be blindly summed with their compatibility aliases.
+
+Recommended Phase 2B: introduce a Redis hot-cache adapter using this same identity, validation and freshness envelope, with backend failure and remaining-TTL tests. Cross-instance dedupe/account quotas require a separately tested coordination design; Redis caching alone does not provide either. Adaptive evidence search, history writes and demand-aware refresh remain later work and were not started.
 
 ## Product goal and non-negotiable truth
 
@@ -260,7 +338,7 @@ Redis outage may fall through to a fresh persistent record or budgeted provider 
 
 Immutable history is optional: useful for cache tuning, demand-based refresh priority, operations and change analysis. Costs include volume, retention, indexing and duplicate events. Start with latest observations and opt-in bounded history only when a concrete use warrants it. History never substitutes for fresh truth and must never generate predictive seat claims.
 
-### Freshness proposal, not immutable product truth
+### Original freshness proposal (superseded by implemented Phase 2A boundaries above)
 
 Make freshness a validated configuration policy evaluated against interval departure time in the railway time zone. The following non-overlapping starting bands resolve the user's approximate ranges; they require operational tuning and are not current TTLs:
 
@@ -292,7 +370,7 @@ The Phase 1 fields and their implemented semantics are listed above. Remaining n
 | logicalAvailabilityChecks | Explicitly defined logical edge requests, independent of provider debit; existing attemptedAvailabilityChecks counts only session misses, so do not silently alias it |
 | providerAvailabilityCalls | Outbound availability attempts charged once to the executing search owner after caches/dedupe; actualSdkInvocations stays separate |
 | cacheHits | Define fresh local/hot hits with layer breakdown; current cacheHits combines local completed/pending reuse |
-| persistentCacheHits | Fresh latest-store reuse; currently absent |
+| persistentCacheHits | Implemented in Phase 2A: fresh latest-store owner reuse |
 | inflightDedupeHits | Local/shared and eventually distributed joins, zero additional provider charge; define mutually exclusive per-check source |
 | providerErrors | Validated failure categories; keep actual attempts versus logical/error replays distinct |
 | budgetLimit / budgetRemaining | Target provider allowance at most 300; publish versioned/distinct check-budget fields during migration |
@@ -310,14 +388,14 @@ Do not turn historical check counters into provider-call counters under the same
 
 | Classification | Finding |
 | --- | --- |
-| Already implemented | Phase 1 global <=300 provider admission, separate logical/provider diagnostics, controlled exhaustion; offline direct discovery, preservation of direct services, exact identity/date/bookability validation, non-reserved negative/error handling, interval DAG, mixed classes, partial evidence, direct-before-indirect order, best-five presentation, process cache/dedupe/concurrency/quota/abort protections |
-| Partially implemented | Complete route eligibility but not fairness under a small actual-call budget; exhaustive matrix capability but no cost selector; useful progressive gap refinement outside the default matrix policy; optional class metadata filtering without a production metadata source; detailed provenance but no observation freshness contract; indirect planning/validation with heuristic caps |
-| Missing after Phase 1 | Dynamic EXACT_MATRIX/ADAPTIVE_GRAPH; bounded high-value frontier across all direct trains; Redis; persistent latest/history; configurable departure-aware freshness; safe stale presentation/SWR; distributed dedupe/quotas; matrix coverage and unified stop reasons |
+| Already implemented | Phase 2A SQLite latest observations, validated freshness and failure-safe persistent reuse; Phase 1 global <=300 provider admission, separate logical/provider diagnostics, controlled exhaustion; offline direct discovery, preservation of direct services, exact identity/date/bookability validation, non-reserved negative/error handling, interval DAG, mixed classes, partial evidence, direct-before-indirect order, best-five presentation, process cache/dedupe/concurrency/quota/abort protections |
+| Partially implemented | Complete route eligibility but not fairness under a small actual-call budget; exhaustive matrix capability but no cost selector; useful progressive gap refinement outside the default matrix policy; optional class metadata filtering without a production metadata source; internal observation provenance/freshness without a new public age-display contract; indirect planning/validation with heuristic caps |
+| Missing after Phase 2A | Dynamic EXACT_MATRIX/ADAPTIVE_GRAPH; bounded high-value frontier across all direct trains; Redis; immutable history; exact-departure freshness; safe stale presentation/SWR; distributed dedupe/quotas; matrix coverage and unified stop reasons |
 | Risk/conflict | 32768/8192 check policy is not the target; sequential early-train/early-station deepening can starve later opportunities; shared hits spend checks; SDK invocations are not external traffic; burst 120 and deadline 90s constrain matrices; session cache can outlive hot TTL; cold matrix cache churn exceeds 500 entries; default matrix lacks early sufficient-quality stopping; docs mix old and current semantics |
 
 Additional audit cautions: the 64-state path cap can prune alternatives even with complete edge evidence; public responses currently lack observation timestamps; matrix recovery's request counter can include newly checked whole-leg classes after an initial RAC short-circuit, so its historical recoveryCalls name is not a strict count of non-whole intervals. Preserve meaning/document it rather than drawing incorrect provider or edge-coverage conclusions. Legacy train/date circuit-breaker behavior is not authority to infer V2 class support.
 
-## Smallest safe implementation sequence
+## Original implementation sequence (historical ordering; Phase 2A update above takes precedence)
 
 1. **Phase 1: actual-call budget and accounting boundary (implemented; see update above).** The original phase contract: add the request-owned <=300 provider budget, scoped transport admission/attribution, explicit exhaustion signaling, separate counters and mocked-transport tests. Preserve normalizers, graph edges, solver, local/shared caches and presentation. Stop fresh work cleanly and retain accumulated evidence; allow zero-cost fresh evidence reuse. Retire the 32768/8192 production-call policy instead of just changing its number. Keep separately named finite computation bounds. No Redis or engine rewrite is needed for this phase; do not claim adaptive search quality yet.
 2. **Phase 2: cost selector and adaptive scheduler.** Compute full cost and additional miss cost per train; select EXACT_MATRIX when safe and ADAPTIVE_GRAPH otherwise. Reuse the existing route extraction/evaluate/intervalPaths seams, add route/class/candidate breadth before deepening, targeted gap refinement and explicit stop reasons. Replace hardcoded old call-count assertions with bounded real-transport and quality invariants; retain legacy truth regressions. Verify a cold 950-edge scope does not enumerate/fetch it exhaustively.
@@ -359,7 +437,7 @@ Inspected source areas and principal files (paths are relative to the repository
 - Legacy/configured budgets: src/application/search-mode.ts, search-budget-orchestrator.ts, journey-recovery-engine.ts; src/journey/connection/provider-session.ts; src/domain/recovery/edges.ts, types.ts; src/journey/utils/search-budget.ts.
 - Tests reviewed by content/targeted assertions: src/tests/availability-accounting.test.ts, availability-scheduler.test.ts, availability-provenance.test.ts, unsupported-evidence-cache.test.ts, production-hardening.test.ts, http-client-concurrency.test.ts; src/local-railway/tests/direct-matrix.test.ts, phase-c-recovery.test.ts, phase-d2-gap.test.ts, phase-d2-strategy.test.ts, journey-v2-api.test.ts, journey-cli-live.test.ts, presentation.test.ts, journey-recovery-v2.test.ts, journey-reserve-v2.test.ts, allocation-v3.test.ts; src/test-support/local-network-only.mjs.
 
-The original documentation-only audit used existing offline tests and typecheck; its results are recorded below. Phase 1 has since been implemented as described above; Phases 2-6 remain proposals. Future sessions should record exact commands/results in their handoff and rerun the applicable evidence/accounting/recovery tests after each behavioral phase.
+The original documentation-only audit used existing offline tests and typecheck; its results are recorded below. Phase 1 and the subsequently requested Phase 2A have since been implemented as described above; Redis, adaptive search and background/history work remain proposals. Future sessions should record exact commands/results in their handoff and rerun the applicable evidence/accounting/recovery tests after each behavioral phase.
 
 ### Recorded audit verification
 
@@ -389,3 +467,25 @@ Validation on the Phase 1 implementation:
 - npm run build: passed; no server was started.
 - git diff --check: passed with only LF/CRLF conversion notices. Untracked/new documents and source were also scanned for trailing whitespace, and local document links resolved.
 - No live provider calls, commits, pushes or deployments. Phase 2 was not started.
+
+### Phase 2A implementation handoff (2026-09-26)
+
+Started from clean HEAD 9e278b7 after reviewing the architecture, Phase 1 code and recent history. Changed 19 source/configuration/documentation files:
+
+- New configuration: src/config/availability-state.ts; updated .env.example.
+- New observation abstraction/backend: src/providers/observations/model.ts, freshness.ts, cache.ts and sqlite-store.ts.
+- Integration/freshness/provenance: src/providers/railkit/availability-scheduler.ts; src/providers/railkit/railkit-provider.ts; src/providers/availability-evidence.ts; src/providers/availability-observation.ts; src/domain/types/availability.ts; src/journey/availability/session.ts.
+- API diagnostics/lifecycle: src/api/services/journey-v2-service.ts; src/api/main.ts.
+- Tests: new src/tests/availability-observation-store.test.ts and src/tests/availability-persistence.test.ts; src/tests/provider.test.ts now uses an isolated scheduler rather than production persistent state.
+- Documentation: README.md; docs/AVAILABILITY-ENGINE.md.
+
+Final validation:
+
+- 40 new persistence/freshness/integration regressions pass.
+- Focused suite: **236 passed, 0 failed**. Command: node --import ./src/test-support/local-network-only.mjs --import tsx --test src/tests/availability-observation-store.test.ts src/tests/availability-persistence.test.ts src/tests/availability-provider-budget.test.ts src/tests/availability-accounting.test.ts src/tests/availability-scheduler.test.ts src/tests/availability-provenance.test.ts src/tests/unsupported-evidence-cache.test.ts src/local-railway/tests/direct-matrix.test.ts src/local-railway/tests/phase-c-recovery.test.ts src/local-railway/tests/phase-d2-gap.test.ts src/local-railway/tests/journey-v2-api.test.ts.
+- npm test: **925 passed, 0 failed**, external networking blocked by the repository test guard.
+- npm run typecheck: passed.
+- npm run build: passed; no server started.
+- git diff --check: passed, with only LF/CRLF conversion notices. New/untracked files were also checked for trailing whitespace; local architecture-document links resolved.
+- The Phase 1 admission, quota and transport files have no diff: availability-provider-budget.ts, railkit-client.ts, provider-quota.ts and availability-abort.ts.
+- No live provider calls, prewarming, commits, pushes or deployment. Phase 2B was not started.

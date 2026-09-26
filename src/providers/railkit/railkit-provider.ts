@@ -1,3 +1,4 @@
+import {observationMetadata} from '../observations/model.js';
 import type { TrainSearchRequest, TrainSearchResult } from '../../domain/types/train-search.js';
 import { normalizeTrainSearch, validateTrainSearch, discoveryFailure } from './railkit-discovery.js';
 import type { RailwayProvider } from '../railway-provider.js';
@@ -36,7 +37,8 @@ export class RailKitProvider implements RailwayProvider {
       validateAvailabilityRequest(input);
       const result = await scheduledAvailability(this.availabilityScheduler, input.trainNumber, input.fromStationCode,
         input.toStationCode, input.journeyDate, input.travelClass, input.quota);
-      return normalizeAvailability(result, input);
+      const normalized=normalizeAvailability(result,input),observation=observationMetadata(result);
+      return observation?{...normalized,observation}:normalized;
     } catch (error: unknown) {
       if (error instanceof ProviderConfigurationError) throw error;
       return availabilityFailure(input, error);

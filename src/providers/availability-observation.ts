@@ -1,5 +1,6 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
 export interface AvailabilityMetrics {
+ hotCacheHits:number;persistentCacheHits:number;persistentCacheMisses:number;persistentCacheStale:number;persistentCacheReadErrors:number;persistentCacheWriteErrors:number;
  logicalAvailabilityChecks:number;attemptedAvailabilityChecks:number;actualSdkInvocations:number;cacheHits:number;
  providerSuccesses:number;providerErrors:number;localConfigurationFailures:number;unsupportedClassSkips:number;
  providerQueueWaits:number;providerQueueWaitMs:number;sharedInflightHits:number;sharedCacheHits:number;
@@ -7,6 +8,7 @@ export interface AvailabilityMetrics {
  providerRateLimited:number;providerTimeouts:number;
 }
 export const emptyAvailabilityMetrics=():AvailabilityMetrics=>({
+ hotCacheHits:0,persistentCacheHits:0,persistentCacheMisses:0,persistentCacheStale:0,persistentCacheReadErrors:0,persistentCacheWriteErrors:0,
  logicalAvailabilityChecks:0,attemptedAvailabilityChecks:0,actualSdkInvocations:0,cacheHits:0,providerSuccesses:0,providerErrors:0,
  localConfigurationFailures:0,unsupportedClassSkips:0,providerQueueWaits:0,providerQueueWaitMs:0,
  unsupportedEvidenceCacheHits:0,providerUnsupportedResponses:0,

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {AvailabilityScheduler} from '../providers/railkit/availability-scheduler.js';
+import {hardeningConfig} from '../config/hardening.js';
 import { RailKitProvider } from '../providers/railkit/railkit-provider.js';
 import { getApiCallCount, resetApiCallCount } from '../utils/api-call-counter.js';
 
@@ -14,7 +16,7 @@ test('provider validates before calls and makes one attempt without retries on f
     throw new Error('offline network failure');
   };
   try {
-    const provider = new RailKitProvider();
+    const provider = new RailKitProvider(new AvailabilityScheduler(hardeningConfig({})));
     resetApiCallCount();
     const request = { trainNumber: '12904', fromStationCode: 'NZM', toStationCode: 'BDTS', journeyDate: '15-09-2099', travelClass: '3A', quota: 'GN' as const };
     const invalid = await provider.getAvailability({ ...request, trainNumber: 'invalid' });
