@@ -1,3 +1,4 @@
+import {invokeAvailabilityProvider} from '../availability-provider-budget.js';
 import { getTrainInfo, getAvailability, searchTrainBetweenStations } from 'railkit';
 import { configureRailKit } from '../../config/railkit.js';
 import { incrementApiCallCount } from '../../utils/api-call-counter.js';
@@ -22,10 +23,11 @@ export async function scheduledAvailability(scheduler:AvailabilityScheduler,...a
   return scheduler.execute(request,async()=>{
     configureRailKit();
     installAvailabilityAbortTransport();
-    scheduler.quota.consume();
-    availabilitySdkInvoked();
-    incrementApiCallCount();
-    return getAvailability(...args);
+    return invokeAvailabilityProvider(()=>scheduler.quota.consume(),async()=>{
+      availabilitySdkInvoked();
+      incrementApiCallCount();
+      return getAvailability(...args);
+    });
   });
 }
 export async function rawAvailability(...args:Parameters<typeof getAvailability>):Promise<unknown>{

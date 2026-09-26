@@ -1,4 +1,4 @@
-export const providerFailureCategories = ['RATE_LIMITED','BOOKING_UNSUPPORTED','INVALID_PROVIDER_RESPONSE','UNKNOWN_PROVIDER_ERROR',
+export const providerFailureCategories = ['PROVIDER_BUDGET_EXHAUSTED','RATE_LIMITED','BOOKING_UNSUPPORTED','INVALID_PROVIDER_RESPONSE','UNKNOWN_PROVIDER_ERROR',
  'UNSUPPORTED_CLASS','INVALID_REQUEST','AUTHENTICATION_FAILED','ACCESS_DENIED','PROVIDER_SERVER_ERROR','PROVIDER_TIMEOUT','NETWORK_FAILURE'] as const;
 export type ProviderFailureCategory = typeof providerFailureCategories[number];
 /** Plain, enumerable, allowlisted evidence: never retain headers or raw bodies. */

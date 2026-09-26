@@ -13,7 +13,7 @@ try {
   if(values.live){
     const {RailKitProvider}=await import('../../providers/railkit/railkit-provider.js');
     if(!process.env.RAILKIT_API_KEY?.trim()||process.env.RAILKIT_API_KEY.trim()==='your_api_key_here')throw new Error('Live mode requires existing RAILKIT_API_KEY configuration');
-    const railkit=new RailKitProvider();provider={getAvailability:r=>railkit.getAvailability(r)};
+    provider=new RailKitProvider();
   }else{const {DeterministicAvailabilityProvider}=await import('../../test-support/availability-fake-provider.js');provider=new DeterministicAvailabilityProvider();}
   database=new RailwayDatabase(resolve(values.db),true);
   const result=await new PlannerV2AvailabilityService(database,provider,{budgetLimit:values.budget===undefined?undefined:Number(values.budget),usableTarget:values.target===undefined?undefined:Number(values.target)}).search({source:positionals[0],destination:positionals[1],journeyDate:positionals[2],requestedClasses:values.classes.split(','),mode:values.mode.toUpperCase() as SearchMode,quota:'GN'});

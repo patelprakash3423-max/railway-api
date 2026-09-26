@@ -113,7 +113,7 @@ for(const scenario of scenarios)test('HTTP admits 3 and rejects fourth globally:
  const replies=await Promise.all(pending);
  assert.ok(replies.every(r=>r.status===200));
  assert.equal(replies.reduce((n,r)=>n+r.body.diagnostics.actualSdkInvocations,0),1);
- assert.ok(replies.every(r=>r.body.diagnostics.budgetLimit===30));
+ assert.ok(replies.every(r=>r.body.diagnostics.budgetLimit===32768));
  assert.equal(new Set([...replies,fourth].map(r=>r.body.requestId)).size,4);
  const cached=await h.send(scenario.peers[0],scenario.headers);
  assert.equal(cached.status,200);assert.equal(cached.body.diagnostics.sharedCacheHits,1);

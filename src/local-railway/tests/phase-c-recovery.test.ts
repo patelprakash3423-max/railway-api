@@ -34,7 +34,7 @@ function fake(rule:(r:AvailabilityRequest)=>State,canBook?:boolean){
 }
 async function run(t:TestContext,answers:Record<string,State>,options:JourneyOptions={},classes=['ALL'],count=1,codes=['A','X','B']){
  const {db,input}=fixture(t,count,codes),p=fake(r=>answers[key(r)]??'WAITLIST');
- const result=await new JourneyRecoveryOrchestrator(db,p.provider,options).validate({...input,requestedClasses:classes});
+ const result=await new JourneyRecoveryOrchestrator(db,p.provider,{directSearch:'PROGRESSIVE',...options}).validate({...input,requestedClasses:classes});
  assert.equal(new Set(p.calls.map(requestKey)).size,p.calls.length);
  assert.equal(result.diagnostics.attemptedAvailabilityChecks,p.calls.length);
  assert.equal(result.diagnostics.actualSdkInvocations,0); // Pure fake never invokes the SDK.
@@ -75,7 +75,7 @@ for(const state of ['WAITLIST','NOT_AVAILABLE','UNSUPPORTED_CLASS','ERROR','AVAI
    }
    return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state:inventory,...(key(r)==='X-B-3E'&&state.endsWith('_FALSE')?{canBook:false}:{})}]};
   }};
-  const r=await new JourneyRecoveryOrchestrator(db,provider).validate(input);
+  const r=await new JourneyRecoveryOrchestrator(db,provider,{directSearch:'PROGRESSIVE'}).validate(input);
   assert.ok(calls.some(r=>key(r)==='X-B-3E'));
   assert.equal(r.journeys[0].reservedCoverageRatio,.5);
   assert.ok(r.journeys[0].legs[0].segments.filter(s=>s.type==='RESERVED').every(s=>s.fromStation==='A'&&s.toStation==='X'));
@@ -112,7 +112,7 @@ for(const reason of ['cancelled','deadline'])test(`Phase C ${reason} stops defer
   return key(r)==='A-X-SL'?'AVAILABLE':'WAITLIST';
  });
  const provider=guardedProvider(p.provider,controller.signal,1000,()=>{});
- await assert.rejects(new JourneyRecoveryOrchestrator(db,provider).validate(input),new RegExp(reason));
+ await assert.rejects(new JourneyRecoveryOrchestrator(db,provider,{directSearch:'PROGRESSIVE'}).validate(input),new RegExp(reason));
  assert.equal(p.calls.length,14);assert.ok(!p.calls.some(r=>r.travelClass==='3E'&&r.fromStationCode==='X'));
 });
 
@@ -131,7 +131,7 @@ test('Phase C deferred exact unsupported hit uses no SDK/quota and UNKNOWN 3E re
  t.after(()=>{globalThis.fetch=savedFetch;if(savedKey===undefined)delete process.env.RAILKIT_API_KEY;else process.env.RAILKIT_API_KEY=savedKey;});
  await real.getAvailability(unsupported);assert.equal(sdk.length,1);
  const provider:AvailabilityProvider={getAvailability:r=>{current=r;return real.getAvailability(r);}};
- const result=await new JourneyRecoveryOrchestrator(db,provider).validate(input);
+ const result=await new JourneyRecoveryOrchestrator(db,provider,{directSearch:'PROGRESSIVE'}).validate(input);
  assert.equal(result.journeys[0].reservedCoverageRatio,1);
  assert.equal(result.diagnostics.unsupportedEvidenceCacheHits,1);
  assert.equal(result.diagnostics.attemptedAvailabilityChecks,17);

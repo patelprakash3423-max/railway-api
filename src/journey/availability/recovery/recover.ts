@@ -15,8 +15,9 @@ const classRounds:TravelClass[][]=[['SL','3A'],['2A','CC','2S'],['1A','EC','3E']
 export interface DeferredRecoveryWork { requests: AvailabilityRequest[][] }
 /** Recovery never owns a provider or creates a second budget. Pass the SAME
  * AvailabilitySession used for whole-leg validation. Call sequentially per request. */
-export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean}={}):Promise<RecoveryResult>{
+export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean;completeMatrix?:boolean}={}):Promise<RecoveryResult>{
   const limits={...defaultRecoveryLimits,...options};
+  const allStations=!!(strategy.progressiveStations||strategy.completeMatrix);
   for(const [key,value]of Object.entries(limits))if(!Number.isFinite(value)||(key==='minimumReservedCoverageRatio'?value<=0||value>1:!Number.isSafeInteger(value)||value<1||value>1000))throw new Error(`Invalid recovery limit ${key}`);
   if(input.quota!==undefined&&input.quota!=='GN')throw new Error('Only GN quota supported');
   if(!/^\d{1,5}$/.test(input.trainNumber)||!Number.isFinite(input.distanceKm)||input.distanceKm<=0)throw new Error('Invalid requested train/distance');
@@ -43,16 +44,16 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   d.splitPointsConsidered=split.length;
   const score=(s:typeof first)=>{const ratio=(s.distanceKm!-first.distanceKm!)/input.distanceKm;return({MAJOR:40,MEDIUM:20,SMALL:0}[net.metrics.get(s.stationCode)!.tier])+50*(1-Math.abs(.5-ratio)*2)+Math.min(30,eventMinute(s,false)-eventMinute(s,true));};
   split.sort((a,b)=>score(b)-score(a)||a.sequence-b.sequence);
-  if(!strategy.progressiveStations&&split.length>limits.maxSplitPoints){truncate('splitPoints');d.intervalsPruned+=split.length-limits.maxSplitPoints;}
-  const selected=strategy.progressiveStations?split:split.slice(0,limits.maxSplitPoints);for(const s of selected)d.splitPointsByTier[net.metrics.get(s.stationCode)!.tier]++;
+  if(!allStations&&split.length>limits.maxSplitPoints){truncate('splitPoints');d.intervalsPruned+=split.length-limits.maxSplitPoints;}
+  const selected=allStations?split:split.slice(0,limits.maxSplitPoints);for(const s of selected)d.splitPointsByTier[net.metrics.get(s.stationCode)!.tier]++;
   if(d.missingDistanceStopsSkipped)truncate('missingDistanceSplits');
   const nodes=[first,...selected,last].sort((a,b)=>a.sequence-b.sequence),nodePosition=new Map(nodes.map((s,i)=>[s.sequence,i]));
   interface Interval{a:number;b:number;checks:Map<TravelClass,InventoryCheck>}
   const intervals=new Map<string,Interval>();
-  const add=(a:number,b:number)=>{const key=`${a}:${b}`,found=intervals.get(key);if(found)return found;if(!strategy.progressiveStations&&intervals.size>=limits.maxIntervals){d.intervalsPruned++;truncate('intervals');return undefined;}const item={a,b,checks:new Map<TravelClass,InventoryCheck>()};intervals.set(key,item);return item;};
+  const add=(a:number,b:number)=>{const key=`${a}:${b}`,found=intervals.get(key);if(found)return found;if(!allStations&&intervals.size>=limits.maxIntervals){d.intervalsPruned++;truncate('intervals');return undefined;}const item={a,b,checks:new Map<TravelClass,InventoryCheck>()};intervals.set(key,item);return item;};
   const full=add(0,nodes.length-1)!;
   const anchored:Interval[][]=[],splits:Interval[][]=[],broader:Interval[][]=[];
-  if(!strategy.progressiveStations){
+  if(!allStations){
   selected.forEach((s,i)=>{const k=nodePosition.get(s.sequence)!;const pair=[add(0,k),add(k,nodes.length-1)].filter((x):x is Interval=>!!x);if(pair.length)(i<2?anchored:splits).push(pair);});
   // Enumerate pairs only among capped split points, never all raw route stops.
   for(let i=1;i<nodes.length-2;i++){const item=add(i,i+1);if(item)splits.push([item]);}
@@ -73,8 +74,8 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   const deferredGroups:{group:Interval[];classes:TravelClass[]}[]=[];
   const evaluate=async(group:Interval[],classes:TravelClass[])=>{
     session.assertActive();
-    const pending=group.filter(v=>![...v.checks.values()].some(usable));
-    const plan=pending.map(v=>{const cached=requested.filter(c=>{const x=session.peekKey(requestKey(request(v,c)));return x&&usable(x);});return{v,classes:(cached.length?cached:classes).filter(c=>!v.checks.has(c)&&!knownUnsupported(c))};});
+    const pending=group.filter(v=>strategy.completeMatrix||![...v.checks.values()].some(usable));
+    const plan=pending.map(v=>{const cached=requested.filter(c=>{const x=session.peekKey(requestKey(request(v,c)));return x&&usable(x);});return{v,classes:(cached.length&&!strategy.completeMatrix?cached:classes).filter(c=>!v.checks.has(c)&&!knownUnsupported(c))};});
     const requests=plan.flatMap(p=>p.classes.map(c=>request(p.v,c)));
     if(!session.canAfford(requests)){deferredGroups.push({group,classes});d.atomicIntervalDeferrals++;truncate('availabilityBudget');return false;}
     // Largest coverage block first; a cache-known poor block wins a length tie.
@@ -83,13 +84,31 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
       if(knownUnsupported(c))continue;
       const r=request(v,c),check=await session.get(r);v.checks.set(c,check);checks.push({fromStation:r.fromStationCode,toStation:r.toStationCode,boardingDate:r.journeyDate,check});
       if(check.status==='AVAILABLE')d.intervalsAvailable++;else if(check.status==='RAC')d.intervalsRac++;else if(check.status==='WAITLIST')d.intervalsWaitlist++;else if(check.status==='PROVIDER_ERROR')d.providerErrors++;
-      if(check.status==='AVAILABLE')break;
+      if(check.status==='AVAILABLE'&&!strategy.completeMatrix)break;
     }
     return true;
   };
   const rounds=classRounds.map(r=>r.filter(c=>requested.includes(c))).filter(r=>r.length);
   const stages:[string,Interval[][]][]=[['FULL',[[full]]],['ANCHORED',anchored],['SPLIT_POINTS',splits],['BROADER',broader]];
-  if(strategy.progressiveStations){
+  if(strategy.completeMatrix){
+    const considered=new Set<number>();let stopped=false;
+    // Every forward pair is eligible. Endpoint intervals precede quadratic
+    // internal expansion so late stops get evidence early. Admit one class
+    // at a time, retaining useful subintervals independently of their gaps.
+    function* matrix():Generator<Interval>{
+      if(!requested.length)return;
+      yield full;
+      for(let k=1;k<nodes.length-1;k++){yield add(0,k)!;yield add(k,nodes.length-1)!;}
+      for(let span=1;span<nodes.length-2;span++)for(let a=1;a+span<nodes.length-1;a++)yield add(a,a+span)!;
+    }
+    matrixLoop:for(const interval of matrix())for(const travelClass of rounds.flat()){
+      if(!await evaluate([interval],[travelClass])){stopped=true;break matrixLoop;}
+      if(interval.a>0)considered.add(interval.a);
+      if(interval.b<nodes.length-1)considered.add(interval.b);
+    }
+    d.candidateIntervalsGenerated=intervals.size;
+    d.progressive={stationsEligible:selected.length,stationsConsidered:considered.size,stationsRemaining:selected.length-considered.size,stationRoundsAttempted:considered.size?1:0,complete:!stopped&&!d.providerErrors&&!d.missingDistanceStopsSkipped};
+  }else if(strategy.progressiveStations){
     const considered=new Set<number>();let stationRounds=0,stopped=false;
     // All route nodes remain eligible. Intervals are generated on demand,
     // bounded by admitted checks plus the first deferred atomic group.

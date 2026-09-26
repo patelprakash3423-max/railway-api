@@ -1,9 +1,10 @@
+import {invokeAvailabilityProvider} from '../../providers/availability-provider-budget.js';
 import {isAnonymousClient,type ClientIdentityClass} from '../client-identity.js';
 import {JourneyV2ApiService,validateJourneyV2Request} from './journey-v2-service.js';
 import type {RailwayDatabase} from '../../local-railway/database.js';
 import type {AvailabilityProvider} from '../../journey/availability/types.js';
 import type {HardeningConfig} from '../../config/hardening.js';
-import {searchModeConfig} from '../../application/search-mode.js';
+import {deepJourneySearchPolicy} from '../../journey/availability/journey/search-policy.js';
 import {PublicError,ProviderConfigurationError} from '../../application/errors.js';
 import {randomUUID} from 'node:crypto';
 import {chargeAvailabilitySdk,emptyAvailabilityMetrics} from '../../providers/availability-observation.js';
@@ -18,7 +19,7 @@ export function validateBookingDate(date:string,horizon:number,now=Date.now()){
  if(day<today||day>today+horizon)throw new PublicError('INVALID_DATE',`Choose a date from today through the next ${horizon} days.`);
 }
 export function guardedProvider(provider:AvailabilityProvider,signal:AbortSignal,timeoutMs:number,consume:()=>void):AvailabilityProvider {
- return {assertActive:()=>signal.throwIfAborted(),getAvailability:async request=>{
+ return {providerCallAccounting:'SCOPED',quotaAccounting:provider.quotaAccounting,assertActive:()=>signal.throwIfAborted(),getAvailability:async request=>{
   signal.throwIfAborted();
   // Shared RailKit work owns its execution timeout and transport signal.
   // The search signal cancels only this waiter; quota belongs to the scheduler.
@@ -30,7 +31,7 @@ export function guardedProvider(provider:AvailabilityProvider,signal:AbortSignal
   try{return await abortable(combined,()=>{
    combined.throwIfAborted();
    const invoke=()=>inAvailabilityScope(combined,()=>provider.getAvailability(request));
-   consume();return invoke();
+   return invokeAvailabilityProvider(consume,invoke);
   });}
   finally{clearTimeout(timer);}
  }};
@@ -47,11 +48,11 @@ export class ProtectedJourneyService {
   // Only static classification and policy flags are logged, never the identity key.
   const identityDiagnostics={clientIdentityClass:context.clientIdentityClass??(isAnonymousClient(client)?'UNKNOWN_PEER':'INTERNAL_CLIENT'),
    perClientEnforced:!isAnonymousClient(client)};
-  const serviceOptions={...this.options,logger:(record:Record<string,unknown>)=>this.options.logger?.({
+  const serviceOptions={...this.options,providerCallBudgetLimit:this.config.providerCallBudgetLimit,logger:(record:Record<string,unknown>)=>this.options.logger?.({
    ...record,...identityDiagnostics,
    ...(record.event==='journey_v2_search_started'?{protection:this.protection.snapshot(client)}:{})
   })};
-  const budgetLimit=searchModeConfig(search.mode).budget!.maxAvailabilityCalls!;
+  const budgetLimit=deepJourneySearchPolicy.maxAvailabilityChecks;
   let lease:ReturnType<SearchProtection['acquire']>;
   try{
    // Search-time validation keeps health available without credentials. No planner,

@@ -24,7 +24,7 @@ function setup(t:TestContext,rule:(r:AvailabilityRequest)=>string=()=> 'AVAILABL
  return {db,data,calls,logs,service,old,router,input,request,counts:()=>({discovery,info,legacy})};
 }
 test('production V2 route uses local planner and only availability; compact full result',async t=>{
- const h=setup(t),reply=await h.request(),r=JSON.parse(reply.body);assert.equal(reply.status,200);assert.equal(reply.headers['Access-Control-Allow-Origin'],'http://localhost:3000');assert.equal(r.results[0].status,'FULLY_RESERVED_USABLE');assert.equal(r.results[0].totalFare.amount,100);assert.equal(r.results[0].reservedCoverageRatio,1);assert.equal(r.diagnostics.budgetLimit,30);assert.equal(r.diagnostics.recoveryReserveInitial,8);assert.deepEqual(h.counts(),{discovery:0,info:0,legacy:0});
+ const h=setup(t),reply=await h.request(),r=JSON.parse(reply.body);assert.equal(reply.status,200);assert.equal(reply.headers['Access-Control-Allow-Origin'],'http://localhost:3000');assert.equal(r.results[0].status,'FULLY_RESERVED_USABLE');assert.equal(r.results[0].totalFare.amount,100);assert.equal(r.results[0].reservedCoverageRatio,1);assert.equal(r.diagnostics.budgetLimit,32768);assert.equal(r.diagnostics.recoveryReserveInitial,0);assert.deepEqual(h.counts(),{discovery:0,info:0,legacy:0});
  assert.equal(r.presentation.version,1);assert.equal(r.presentation.initialVisibleCount,5);
  assert.equal(r.presentation.summary.totalJourneys,r.results.length);
  for(const [i,j] of r.results.entries()){
@@ -51,7 +51,7 @@ test('production V2 unsupported class continues other classes without generic 50
  const h=setup(t,r=>r.travelClass==='SL'?'Class does not exist in this train for this Train route':'AVAILABLE');const reply=await h.request(),r=JSON.parse(reply.body);assert.equal(reply.status,200);assert.equal(r.results[0].status,'FULLY_RESERVED_USABLE');assert.equal(r.diagnostics.unsupportedClassResponses,1);assert.equal(r.diagnostics.providerErrors,0);
 });
 for(const patch of [{from:''},{from:'ZZZZZ'},{to:'AAA'},{date:'31-02-2026'},{date:'2026-09-18'},{classes:[]},{classes:['BAD']},{classes:['ALL','SL']},{mode:'INVALID'},{quota:'TQ'}])test(`production V2 validates ${JSON.stringify(patch)}`,async t=>{const h=setup(t);const reply=await h.request({...h.input,...patch});assert.equal(reply.status,400);assert.equal(h.calls.length,0);});
-for(const [mode,limit,reserve]of [['QUICK',12,3],['STANDARD',30,8],['DEEP',40,10]])test(`API preserves ${mode} global budget/reserve and request-local cache`,async t=>{
+for(const [mode,limit,reserve]of [['QUICK',32768,0],['STANDARD',32768,0],['DEEP',32768,0]])test(`API preserves ${mode} global budget/reserve and request-local cache`,async t=>{
  const h=setup(t,()=> 'WAITLIST');const a=JSON.parse((await h.request({...h.input,mode,classes:'ALL'})).body),used=h.calls.length;assert.ok(used<=Number(limit));assert.equal(a.diagnostics.budgetLimit,Number(limit));assert.equal(a.diagnostics.recoveryReserveInitial,Number(reserve));assert.equal(a.diagnostics.wholeLegCalls+a.diagnostics.recoveryCalls,used);assert.ok(a.diagnostics.cacheHits>0);await h.request({...h.input,mode,classes:'ALL'});assert.equal(h.calls.length,used*2);assert.deepEqual(h.counts(),{discovery:0,info:0,legacy:0});
 });
 test('V2 preflight retains explicit-origin CORS without invoking any service',async t=>{const h=setup(t);const reply=await h.router({method:'OPTIONS',path:'/api/journeys/v2/search',origin:'http://localhost:3000'});assert.equal(reply.status,204);assert.equal(reply.headers['Access-Control-Allow-Origin'],'http://localhost:3000');const denied=await h.router({method:'OPTIONS',path:'/api/journeys/v2/search',origin:'https://untrusted.example'});assert.equal(denied.headers['Access-Control-Allow-Origin'],undefined);assert.equal(h.calls.length,0);});
@@ -74,6 +74,6 @@ test('V2 endpoint returns display order after engine output, retaining train dat
  assert.deepEqual(r.results.map((j:{legs:{trainNumber:string}[]})=>j.legs[0].trainNumber),['30002','30001']);
  assert.deepEqual(r.results.map((j:{presentation:{displayRank:number}})=>j.presentation.displayRank),[1,2]);
  assert.equal(r.results[0].legs[0].trainName,'Available train');assert.equal(r.results[1].legs[0].segments[0].availabilityStatus,'RAC');
- assert.equal(r.presentation.summary.primaryJourneys,2);assert.equal(r.diagnostics.budgetLimit,30);assert.equal(r.diagnostics.recoveryReserveInitial,8);
+ assert.equal(r.presentation.summary.primaryJourneys,2);assert.equal(r.diagnostics.budgetLimit,32768);assert.equal(r.diagnostics.recoveryReserveInitial,0);
  assert.equal(r.diagnostics.availabilityCalls,h.calls.length);assert.ok(h.calls.length<=30);assert.deepEqual(h.counts(),{discovery:0,info:0,legacy:0});
 });

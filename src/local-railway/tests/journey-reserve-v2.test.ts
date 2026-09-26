@@ -24,23 +24,23 @@ function provider(rule:(r:AvailabilityRequest)=>'AVAILABLE'|'WAITLIST'|string){
 test('protected STANDARD capacity reaches a later recoverable candidate after early WAITLIST',async t=>{
  const {db,input}=setup(t);const train=input.plannerCandidates[1].segments[0].trainNumber;
  const p=provider(r=>r.trainNumber===train&&r.toStationCode==='BBB'&&r.travelClass==='SL'?'AVAILABLE':'WAITLIST');
- const r=await new JourneyRecoveryOrchestrator(db,p).validate({...input,mode:'STANDARD'}),d=r.diagnostics;
+ const r=await new JourneyRecoveryOrchestrator(db,p,{directSearch:'PROGRESSIVE'}).validate({...input,mode:'STANDARD'}),d=r.diagnostics;
  const firstInterval=p.calls.findIndex(c=>c.fromStationCode==='BBB'||c.toStationCode==='BBB');
  assert.ok(firstInterval>=0&&firstInterval<=22);assert.ok(d.recoveryIntervalRequests>0);assert.ok(d.availabilityRequestsUsed<=30);assert.equal(d.recoveryReserveInitial,8);assert.ok(d.recoveryReserveUsed>0);
  assert.ok(r.journeys.some(j=>j.scheduleCandidate.segments[0].trainNumber===train&&j.journeyStatus==='PARTIAL_RESERVED_RECOVERY'));
  assert.deepEqual(p.counts(),{discovery:0,info:0});assert.equal(d.wholeLegRequests+d.recoveryIntervalRequests,p.calls.length);
 });
 test('early whole-leg success is retained without recovery',async t=>{
- const {db,input}=setup(t),p=provider(()=> 'AVAILABLE');const r=await new JourneyRecoveryOrchestrator(db,p,{usableTarget:1}).validate(input);
+ const {db,input}=setup(t),p=provider(()=> 'AVAILABLE');const r=await new JourneyRecoveryOrchestrator(db,p,{directSearch:'PROGRESSIVE',usableTarget:1}).validate(input);
  assert.equal(r.journeys[0].journeyStatus,'FULLY_RESERVED_USABLE');assert.equal(r.diagnostics.recoveryIntervalRequests,0);assert.ok(p.calls.length<=22);
 });
 test('unused reserve releases to complete deferred whole-leg validation',async t=>{
  const {db,input}=setup(t),p=provider(r=>r.travelClass==='1A'?'AVAILABLE':'WAITLIST');
- const r=await new JourneyRecoveryOrchestrator(db,p,{usableTarget:6}).validate(input),d=r.diagnostics;
+ const r=await new JourneyRecoveryOrchestrator(db,p,{directSearch:'PROGRESSIVE',usableTarget:6}).validate(input),d=r.diagnostics;
  assert.ok(d.recoveryReserveReleased>0);assert.ok(d.releasedReserveCalls>0);assert.equal(d.recoveryIntervalRequests,0);assert.ok(d.wholeLegRequests>22);assert.ok(d.availabilityRequestsUsed<=30);assert.ok(d.fullReservedJourneys>=3);
 });
 for(const [mode,limit,reserve]of [['QUICK',12,3],['STANDARD',30,8],['DEEP',40,10]]as const)test(`${mode} reserve and shared global hard limit`,async t=>{
- const {db,input}=setup(t),p=provider(()=> 'WAITLIST');const r=await new JourneyRecoveryOrchestrator(db,p).validate({...input,mode:mode as SearchMode}),d=r.diagnostics;
+ const {db,input}=setup(t),p=provider(()=> 'WAITLIST');const r=await new JourneyRecoveryOrchestrator(db,p,{directSearch:'PROGRESSIVE'}).validate({...input,mode:mode as SearchMode}),d=r.diagnostics;
  assert.equal(d.availabilityBudgetLimit,limit);assert.equal(d.recoveryReserveInitial,reserve);assert.ok(p.calls.length<=limit);assert.equal(d.wholeLegRequests+d.recoveryIntervalRequests,p.calls.length);assert.equal(d.budgetRemaining,limit-p.calls.length);assert.equal(d.recoveryReserveUsed+d.recoveryReserveReleased,reserve);assert.deepEqual(p.counts(),{discovery:0,info:0});
 });
 const request:AvailabilityRequest={trainNumber:'30001',fromStationCode:'AAA',toStationCode:'CCC',journeyDate:date,travelClass:'SL',quota:'GN'};
@@ -51,7 +51,7 @@ test('route unsupported phrase has an explicit category and exact concurrent cac
  await session.get({...request,toStationCode:'BBB'});assert.equal(p.calls.length,2);assert.equal(session.unsupported.size,0);
 });
 test('unsupported class allows another class to succeed in Journey V2',async t=>{
- const {db,input}=setup(t),p=provider(r=>r.travelClass==='SL'?unsupported:'AVAILABLE');const r=await new JourneyRecoveryOrchestrator(db,p,{usableTarget:1}).validate(input);
+ const {db,input}=setup(t),p=provider(r=>r.travelClass==='SL'?unsupported:'AVAILABLE');const r=await new JourneyRecoveryOrchestrator(db,p,{directSearch:'PROGRESSIVE',usableTarget:1}).validate(input);
  assert.equal(r.journeys[0].journeyStatus,'FULLY_RESERVED_USABLE');assert.equal(r.journeys[0].legs[0].segments[0].type,'RESERVED');assert.ok(r.diagnostics.unsupportedClassResponses>0);assert.equal(r.diagnostics.providerErrors,0);
 });
 test('unsupported detection stays narrow and cannot override rate limits or outages',()=>{
@@ -65,7 +65,7 @@ test('thrown route unsupported phrase is also scoped to the exact request',async
 });
 test('protected whole-leg atomic groups never partially consume their allowance',async t=>{
  const {db,input}=setup(t),p=provider(()=> 'WAITLIST');
- const r=await new JourneyRecoveryOrchestrator(db,p,{recoveryReserve:29,usableTarget:20}).validate(input);
+ const r=await new JourneyRecoveryOrchestrator(db,p,{directSearch:'PROGRESSIVE',recoveryReserve:29,usableTarget:20}).validate(input);
  // Only one call is available during the protected pass. V3 can check SL
  // atomically, but cannot establish failure across all classes for recovery.
  assert.equal(r.diagnostics.recoveryReserveUsed,0);assert.equal(r.diagnostics.recoveryReserveReleased,29);assert.ok(r.diagnostics.releasedReserveCalls>0);assert.ok(p.calls.length<=30);

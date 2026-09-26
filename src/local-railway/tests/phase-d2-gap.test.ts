@@ -34,7 +34,7 @@ for(const count of [1,3])for(const classes of [['ALL'],['SL'],['SL','3A']])test(
   const head=r.trainNumber==='12565'&&r.fromStationCode==='SV'&&r.toStationCode==='GKP'&&r.travelClass==='1A';
   return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state:tail||head?'AVAILABLE':'WAITLIST',availabilityText:tail?'AVL 3':head?'AVL 1':'WL 1'}]};
  }};
- const result=await new JourneyRecoveryOrchestrator(db,provider).validate({source:'SV',destination:'NDLS',journeyDate:date,requestedClasses:classes,mode:'STANDARD',plannerCandidates:Array.from({length:count},(_,i)=>({...candidate,segments:candidate.segments.map(l=>({...l,trainNumber:String(12565+i)}))}))});
+ const result=await new JourneyRecoveryOrchestrator(db,provider,{directSearch:'PROGRESSIVE'}).validate({source:'SV',destination:'NDLS',journeyDate:date,requestedClasses:classes,mode:'STANDARD',plannerCandidates:Array.from({length:count},(_,i)=>({...candidate,segments:candidate.segments.map(l=>({...l,trainNumber:String(12565+i)}))}))});
  const journey=result.journeys[0];
  assert.ok(calls.length<=30);assert.equal(result.diagnostics.availabilityBudgetLimit,30);
  assert.equal(result.diagnostics.attemptedAvailabilityChecks,calls.length);

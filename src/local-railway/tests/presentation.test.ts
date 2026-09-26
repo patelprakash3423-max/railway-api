@@ -4,18 +4,30 @@ import {readFileSync} from 'node:fs';
 import {presentJourneys,inventoryQualityScore,journeySignature} from '../../journey/presentation/index.js';
 import type {JourneyV2Result,JourneyV2Status} from '../../api/services/journey-v2-model.js';
 const fixture=JSON.parse(readFileSync(new URL('./fixtures/journey-v2.json',import.meta.url),'utf8')).results[0] as JourneyV2Result;
-const make=(id:string,patch:Partial<JourneyV2Result>={}):JourneyV2Result=>({...structuredClone(fixture),id,...patch});
+const make=(id:string,patch:Partial<JourneyV2Result>={}):JourneyV2Result=>{
+ const j={...structuredClone(fixture),id,...patch};
+ if(['SCHEDULED_BUT_NOT_FULLY_AVAILABLE','INVENTORY_CHECK_INCOMPLETE'].includes(j.status)&&patch.reservedCoverageRatio===undefined){
+  j.reservedCoverageRatio=0;j.legs.forEach(l=>{l.segments=[];});j.totalFare={status:'UNKNOWN',amount:null,currency:'INR'};
+ }
+ return j;
+};
 const first=(a:JourneyV2Result,b:JourneyV2Result)=>presentJourneys([a,b]).results[0].id;
 const statuses:JourneyV2Status[]=['FULLY_RESERVED_USABLE','FULLY_RESERVED_WITH_SPLIT_CLASS','PARTIAL_RESERVED_RECOVERY','SCHEDULED_BUT_NOT_FULLY_AVAILABLE','INVENTORY_CHECK_INCOMPLETE'];
-test('hard tiers dominate duration, fare and changes; engine order preserved',()=>{
- const input=[...statuses].reverse().map((status,i)=>make(String(i),{status,totalDurationMinutes:i+1,totalFare:{status:'COMPLETE',amount:i,currency:'INR'}}));
- const r=presentJourneys(input);assert.deepEqual(r.results.map(j=>j.status),statuses);assert.deepEqual(r.results.map(j=>j.presentation.engineRank),[5,4,3,2,1]);assert.deepEqual(r.results.map(j=>j.presentation.displayRank),[1,2,3,4,5]);
+test('coverage precedes status labels and preserves original engine ranks',()=>{
+ const partial=unique('partial',{status:'PARTIAL_RESERVED_RECOVERY',reservedCoverageRatio:.6,totalDurationMinutes:500});
+ const incomplete=unique('incomplete',{status:'INVENTORY_CHECK_INCOMPLETE',reservedCoverageRatio:.8,totalDurationMinutes:1000});
+ const full=unique('full');
+ const r=presentJourneys([partial,incomplete,full]);
+ assert.deepEqual(r.results.map(j=>j.id),['full','incomplete','partial']);
+ assert.deepEqual(r.results.map(j=>j.presentation.engineRank),[3,2,1]);
+ assert.ok(r.results.every(j=>j.presentation.initiallyVisible));
 });
+
 test('higher coverage dominates inventory quality within recovery',()=>{const a=make('a',{status:'PARTIAL_RESERVED_RECOVERY',reservedCoverageRatio:.72}),b=make('b',{status:'PARTIAL_RESERVED_RECOVERY',reservedCoverageRatio:.9});assert.equal(first(a,b),'b');});
 test('AVAILABLE outranks RAC using normalized segment distance',()=>{const a=make('rac'),b=make('available');for(const l of a.legs)for(const s of l.segments)if(s.type==='RESERVED')s.availabilityStatus='RAC';assert.equal(inventoryQualityScore(b),1);assert.equal(inventoryQualityScore(a),.8);assert.equal(first(a,b),'available');});
 test('inventory quality excludes uncovered distance, clamps and handles zero distance',()=>{const j=make('mixed');j.legs[1].segments=[{type:'SELF_MANAGED',fromStation:'GD',toStation:'SV',distanceKm:273}];assert.equal(inventoryQualityScore(j),631/904);assert.equal(inventoryQualityScore({...j,totalDistanceKm:0}),0);assert.equal(inventoryQualityScore({...j,totalDistanceKm:1}),1);});
 for(const [field,low,high] of [['trainChanges',0,2],['classChanges',0,2],['totalDurationMinutes',800,1000]] as const)test(`same-tier prefers lower ${field}`,()=>{assert.equal(first(make('a',{[field]:high}),make('b',{[field]:low})),'b');});
-test('self-managed distance precedes changes and duration',()=>{const a=make('a'),b=make('b',{trainChanges:5,totalDurationMinutes:2000});a.legs[0].segments.push({type:'SELF_MANAGED',fromStation:'X',toStation:'Y',distanceKm:10});assert.equal(first(a,b),'b');});
+test('equal coverage prefers fewer train changes before uncovered-distance presentation',()=>{const a=make('a'),b=make('b',{trainChanges:5,totalDurationMinutes:2000});a.legs[0].segments.push({type:'SELF_MANAGED',fromStation:'X',toStation:'Y',distanceKm:10});assert.equal(first(a,b),'a');});
 test('connection penalty matches existing GOOD TIGHT LONG semantics',()=>{const r=presentJourneys(['LONG','TIGHT','GOOD'].map((s,i)=>make(String(i),{connections:[{station:'GD',waitMinutes:33,safety:s as 'LONG'}]})));assert.deepEqual(r.results.map(j=>j.presentation.connectionSafetyPenalty),[0,1,2]);});
 test('distance is a late criterion after connection safety',()=>{const a=make('a',{totalDistanceKm:1000}),b=make('b',{totalDistanceKm:900});a.legs=[];b.legs=[];assert.equal(first(a,b),'b');});
 test('fare compares complete totals late, never partial as total',()=>{const cheap=make('cheap',{totalFare:{status:'COMPLETE',amount:1,currency:'INR'}}),costly=make('costly');assert.equal(first(costly,cheap),'cheap');assert.equal(first({...cheap,trainChanges:3},costly),'costly');assert.equal(first({...cheap,totalFare:{status:'PARTIAL',amount:1,currency:'INR'}},costly),'costly');assert.equal(first({...cheap,totalFare:{status:'UNKNOWN',amount:null,currency:'INR'}},costly),'costly');});
@@ -33,3 +45,12 @@ test('schedule-only results get exactly one BEST_SCHEDULED_OPTION, no usable bad
 test('summary separates primary statuses from raw totals, caps initial cards at five',()=>{const input=[...Array.from({length:7},(_,i)=>unique(String(i))),make('variant'),make('variant2'),unique('r',{status:'PARTIAL_RESERVED_RECOVERY'}),unique('s',{status:'SCHEDULED_BUT_NOT_FULLY_AVAILABLE'}),unique('i',{status:'INVENTORY_CHECK_INCOMPLETE'})];const r=presentJourneys(input);assert.equal(r.results.length,12);assert.deepEqual(r.presentation.summary,{totalJourneys:12,primaryJourneys:11,fullyReserved:8,fullSplitClass:0,partialRecovery:1,scheduledFallback:1,inventoryIncomplete:1,bestJourneyId:'0',hiddenAlternativeCount:7});assert.equal(r.results.filter(j=>j.presentation.initiallyVisible).length,5);assert.equal(r.presentation.groups[2].collapsedByDefault,true);});
 test('empty input has no best and no badges',()=>{assert.equal(presentJourneys([]).presentation.summary.bestJourneyId,null);assert.deepEqual(presentJourneys([]).results,[]);});
 test('presentation implementation has no runtime dependencies capable of provider/network calls',()=>{const source=readFileSync(new URL('../../journey/presentation/index.ts',import.meta.url),'utf8');assert.doesNotMatch(source,/^import (?!type)/m);assert.doesNotMatch(source,/\b(fetch|RailKit|Database|random|performance)\s*[.(]/);});
+
+test('connection safety precedes duration at equal coverage and changes',()=>{
+ const safe=make('safe',{totalDurationMinutes:1500,connections:[{station:'X',waitMinutes:90,safety:'GOOD'}]});
+ const tight=make('tight',{totalDurationMinutes:500,connections:[{station:'X',waitMinutes:30,safety:'TIGHT'}]});
+ assert.equal(first(tight,safe),'safe');
+});
+test('full same-train split outranks a full connection regardless of status tier',()=>{
+ assert.equal(first(make('connection',{trainChanges:1}),make('direct',{status:'FULLY_RESERVED_WITH_SPLIT_CLASS',trainChanges:0,classChanges:1})),'direct');
+});

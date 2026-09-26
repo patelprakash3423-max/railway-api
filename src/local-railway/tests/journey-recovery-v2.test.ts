@@ -26,7 +26,7 @@ async function run(t:TestContext,rule:Rule,distances=[1000],fractions=distances.
   const {db,candidate}=fixture(t,distances,fractions,start),calls:AvailabilityRequest[]=[];
   let discovery=0,info=0;
   const provider={getAvailability:async(r:AvailabilityRequest):Promise<AvailabilityResult>=>{calls.push({...r});const state=rule(r);return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state}],fare:state==='AVAILABLE'||state==='RAC'?{currency:'INR',totalFare:100}:undefined};},getTrainInfo:async()=>{info++;throw Error('forbidden');},searchTrainsBetweenStations:async()=>{discovery++;throw Error('forbidden');}};
-  const result=await new JourneyRecoveryOrchestrator(db,provider,{budgetLimit:100,maxRecoveryRequestsPerCandidate:60,usableTarget:10,...options}).validate({source:candidate.from,destination:candidate.to,journeyDate:date,requestedClasses:['SL','3A'],supportedClassesByTrain:metadata,plannerCandidates:Array.from({length:count},()=>candidate)});
+  const result=await new JourneyRecoveryOrchestrator(db,provider,{directSearch:'PROGRESSIVE',budgetLimit:100,maxRecoveryRequestsPerCandidate:60,usableTarget:10,...options}).validate({source:candidate.from,destination:candidate.to,journeyDate:date,requestedClasses:['SL','3A'],supportedClassesByTrain:metadata,plannerCandidates:Array.from({length:count},()=>candidate)});
   assert.equal(discovery,0);assert.equal(info,0);assert.equal(new Set(calls.map(requestKey)).size,calls.length);
   return {...result,calls,j:result.journeys[0]};
 }
@@ -84,7 +84,7 @@ test('Phase C ALL reaches deferred complementary 3E within STANDARD budget',asyn
     const state=(r.toStationCode==='M0'&&r.travelClass==='SL')||(r.fromStationCode==='M0'&&r.travelClass==='3E')?'AVAILABLE':'WAITLIST';
     return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state}]};
   }};
-  const result=await new JourneyRecoveryOrchestrator(db,provider).validate({source:'S0',destination:'S1',journeyDate:date,requestedClasses:['ALL'],plannerCandidates:[candidate]});
+  const result=await new JourneyRecoveryOrchestrator(db,provider,{directSearch:'PROGRESSIVE'}).validate({source:'S0',destination:'S1',journeyDate:date,requestedClasses:['ALL'],plannerCandidates:[candidate]});
   t.diagnostic(JSON.stringify({whole:result.diagnostics.wholeLegRequests,interval:result.diagnostics.recoveryIntervalRequests,remaining:result.diagnostics.budgetRemaining,classes:calls.filter(r=>r.fromStationCode==='M0').map(r=>r.travelClass)}));
   assert.equal(result.journeys[0].journeyStatus,'FULLY_RESERVED_WITH_SPLIT_CLASS');
   assert.equal(result.journeys[0].trainChanges,0);

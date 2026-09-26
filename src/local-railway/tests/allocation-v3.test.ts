@@ -24,7 +24,7 @@ async function trace(t:TestContext,legs:number,rule:(r:AvailabilityRequest)=>Sta
  const stations=[...codes,...Array.from({length:legs},(_,i)=>`M${i}`)].map(code=>({code,name:code}));
  db.replace({trains,stops,stations,metadata:{source:'RAILPULL_NTES',importedAt:'2026-09-14T00:00:00Z',trainCount:trains.length,stationCount:stations.length,stopCount:stops.length}});
  const calls:AvailabilityRequest[]=[];
- const result=await new JourneyRecoveryOrchestrator(db,{getAvailability:async(r):Promise<AvailabilityResult>=>{calls.push(r);const state=rule(r);return state==='UNSUPPORTED'?{request:r,provider:'railkit',providerState:'PROVIDER_ERROR',days:[],providerMessage:'Class does not exist in this train for this Train route'}:{request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state}]};}},extra).validate({source:codes[0],destination:codes[legs],journeyDate:date,requestedClasses:classes,mode:'STANDARD',plannerCandidates:candidates});
+ const result=await new JourneyRecoveryOrchestrator(db,{getAvailability:async(r):Promise<AvailabilityResult>=>{calls.push(r);const state=rule(r);return state==='UNSUPPORTED'?{request:r,provider:'railkit',providerState:'PROVIDER_ERROR',days:[],providerMessage:'Class does not exist in this train for this Train route'}:{request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state}]};}},{directSearch:'PROGRESSIVE',...extra}).validate({source:codes[0],destination:codes[legs],journeyDate:date,requestedClasses:classes,mode:'STANDARD',plannerCandidates:candidates});
  assert.ok(calls.length<=30);
  assert.equal(result.diagnostics.wholeLegRequests+result.diagnostics.recoveryIntervalRequests,calls.length);
  return {...result,calls};

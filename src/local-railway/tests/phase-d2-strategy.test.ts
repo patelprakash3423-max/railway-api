@@ -28,7 +28,7 @@ function fixture(t:TestContext,count=1,intermediates=1){
 async function run(t:TestContext,rule:(r:AvailabilityRequest)=>State,options:JourneyOptions={},count=1,stops=1,classes=['SL']){
  const f=fixture(t,count,stops),calls:AvailabilityRequest[]=[];
  const provider={getAvailability:async(r:AvailabilityRequest):Promise<AvailabilityResult>=>{calls.push({...r});return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state:rule(r)}]};}};
- const result=await new JourneyRecoveryOrchestrator(f.db,provider,options).validate({...f.input,requestedClasses:classes});
+ const result=await new JourneyRecoveryOrchestrator(f.db,provider,{directSearch:'PROGRESSIVE',...options}).validate({...f.input,requestedClasses:classes});
  return {...result,calls};
 }
 test('D2 direct same-train recovery precedes indirect inventory',async t=>{
@@ -97,7 +97,7 @@ for(const budgetLimit of [12,30,40,100])test(`D2 shared budget remains ${budgetL
 test('D2 cancellation stops progressive work before further calls',async t=>{
  const f=fixture(t,1,20),controller=new AbortController();let calls=0;
  const provider={assertActive:()=>controller.signal.throwIfAborted(),getAvailability:async(r:AvailabilityRequest):Promise<AvailabilityResult>=>{if(++calls===12)controller.abort(new Error('cancelled'));return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state:'WAITLIST'}]};}};
- await assert.rejects(new JourneyRecoveryOrchestrator(f.db,provider).validate(f.input),/cancelled/);assert.equal(calls,12);
+ await assert.rejects(new JourneyRecoveryOrchestrator(f.db,provider,{directSearch:'PROGRESSIVE'}).validate(f.input),/cancelled/);assert.equal(calls,12);
 });
 
 // Exercise the process-shared cache, not just a second call in one session.
@@ -120,7 +120,7 @@ for(const count of [1,3])for(const [mode,budget] of [['QUICK',12],['STANDARD',30
    return {success:true,data:{availability:[{date:r.journeyDate,status:usable?'AVAILABLE':'WAITLIST'}]}};
   }),r);
  }};
- const search=()=>new JourneyRecoveryOrchestrator(f.db,provider,{usableTarget:1}).validate({...f.input,mode,requestedClasses:classes});
+ const search=()=>new JourneyRecoveryOrchestrator(f.db,provider,{directSearch:'PROGRESSIVE',usableTarget:1}).validate({...f.input,mode,requestedClasses:classes});
  const cold=await search(),coldTrace=trace;
  const coldSdk=sdkCalls;trace=[];
  const warm=await search();

@@ -17,7 +17,7 @@ function knownFare(j:JourneyV2Result):number|undefined {
 }
 export function comparePresentation(a:PresentedJourney,b:PresentedJourney):number {
  const x=a.presentation,y=b.presentation;
- return tiers[a.status]-tiers[b.status] || b.reservedCoverageRatio-a.reservedCoverageRatio || y.inventoryQualityScore-x.inventoryQualityScore || x.selfManagedDistanceKm-y.selfManagedDistanceKm || a.trainChanges-b.trainChanges || a.classChanges-b.classChanges || a.totalDurationMinutes-b.totalDurationMinutes || x.connectionSafetyPenalty-y.connectionSafetyPenalty || a.totalDistanceKm-b.totalDistanceKm || compareFare(a,b) || x.engineRank-y.engineRank;
+ return b.reservedCoverageRatio-a.reservedCoverageRatio || y.inventoryQualityScore-x.inventoryQualityScore || a.trainChanges-b.trainChanges || a.classChanges-b.classChanges || x.connectionSafetyPenalty-y.connectionSafetyPenalty || a.totalDurationMinutes-b.totalDurationMinutes || a.totalDistanceKm-b.totalDistanceKm || compareFare(a,b) || tiers[a.status]-tiers[b.status] || x.engineRank-y.engineRank;
 }
 function compareFare(a:JourneyV2Result,b:JourneyV2Result):number {
  const x=knownFare(a),y=knownFare(b);
@@ -26,21 +26,21 @@ function compareFare(a:JourneyV2Result,b:JourneyV2Result):number {
 export function presentJourneys(input:readonly JourneyV2Result[]):{results:PresentedJourney[];presentation:PresentationMetadata} {
  const results:PresentedJourney[]=input.map((j,i)=>{
   const signature=journeySignature(j);
-  return {...j,presentation:{engineRank:i+1,displayRank:0,group:group(j.status),badges:[],inventoryQualityScore:inventoryQualityScore(j),selfManagedDistanceKm:j.legs.flatMap(l=>l.segments).reduce((n,s)=>n+(s.type==='SELF_MANAGED'?distance(s.distanceKm):0),0),
+  return {...j,presentation:{engineRank:i+1,displayRank:0,group:inventoryQualityScore(j)>0&&tiers[j.status]>2?'RECOVERY':group(j.status),badges:[],inventoryQualityScore:inventoryQualityScore(j),selfManagedDistanceKm:j.legs.flatMap(l=>l.segments).reduce((n,s)=>n+(s.type==='SELF_MANAGED'?distance(s.distanceKm):0),0),
    // Preserve existing Planner V2 ranking semantics: GOOD=0, TIGHT=1, LONG=2.
    connectionSafetyPenalty:j.connections.reduce((n,c)=>n+({GOOD:0,TIGHT:1,LONG:2}[c.safety]),0),journeySignature:signature,variantGroupId:signature,isPrimaryVariant:false,alternateVariantCount:0,initiallyVisible:false}};
  }).sort(comparePresentation);
  const variants=new Map<string,PresentedJourney[]>();
  results.forEach((j,i)=>{j.presentation.displayRank=i+1;const key=j.presentation.variantGroupId;const items=variants.get(key)??[];items.push(j);variants.set(key,items);});
  const primaries=[...variants.values()].map(items=>{items[0].presentation.isPrimaryVariant=true;items[0].presentation.alternateVariantCount=items.length-1;return items[0];});
- const eligible=primaries.filter(j=>tiers[j.status]<=3);
+ const eligible=primaries.filter(j=>j.presentation.inventoryQualityScore>0);
  const best=results[0];
- if(best)best.presentation.badges.push(tiers[best.status]<=3?'BEST_OPTION':'BEST_SCHEDULED_OPTION');
+ if(best)best.presentation.badges.push(best.presentation.inventoryQualityScore>0?'BEST_OPTION':'BEST_SCHEDULED_OPTION');
  const award=(badge:JourneyBadge,pool:PresentedJourney[],compare:(a:PresentedJourney,b:PresentedJourney)=>number)=>{
   const winner=[...pool].sort((a,b)=>compare(a,b)||a.presentation.displayRank-b.presentation.displayRank)[0];
   if(winner)winner.presentation.badges.push(badge);
  };
- // Performance badges apply only to usable/recovery primary routes. Unchecked schedules get no implied ticket claims.
+ // Performance badges require actual reserved evidence. Status and unknown gaps remain unchanged.
  award('FASTEST',eligible,(a,b)=>a.totalDurationMinutes-b.totalDurationMinutes);
  award('CHEAPEST',eligible.filter(j=>knownFare(j)!==undefined),(a,b)=>knownFare(a)!-knownFare(b)!);
  award('FEWEST_CHANGES',eligible,(a,b)=>a.trainChanges-b.trainChanges);

@@ -1,3 +1,4 @@
+import type {ProviderCallDiagnostics} from '../../providers/availability-provider-budget.js';
 import type {AvailabilityEvidence} from '../../providers/availability-evidence.js';
 import type { RailwayProvider } from '../../providers/railway-provider.js';
 import type { AvailabilityResult } from '../../domain/types/availability.js';
@@ -13,6 +14,8 @@ export type AvailabilityProvider = Pick<RailwayProvider, 'getAvailability'> & {
   assertActive?: () => void;
   /** Other injected providers retain conservative adapter-invocation accounting. */
   quotaAccounting?: 'SDK_INVOCATION';
+  /** Wrapper already admits at its scoped outbound boundary. */
+  providerCallAccounting?: 'SCOPED';
 };
 export type InventoryStatus = 'AVAILABLE' | 'RAC' | 'WAITLIST' | 'UNAVAILABLE' | 'UNSUPPORTED_CLASS' | 'PROVIDER_ERROR';
 export type ErrorCategory = import('../../domain/types/provider-failure.js').ProviderFailureCategory | 'PROVIDER_UNAVAILABLE';
@@ -26,7 +29,7 @@ export interface ValidatedJourney {
   totalFare: { status: 'COMPLETE' | 'PARTIAL' | 'UNKNOWN'; amount: number | null; knownSubtotal: number; knownLegCount: number; currency: 'INR' };
   scheduleRank: number; finalRank: number;
 }
-export interface AvailabilityDiagnostics extends AvailabilityMetrics {
+export interface AvailabilityDiagnostics extends AvailabilityMetrics, ProviderCallDiagnostics {
   plannerCandidatesReceived: number; candidatesValidationStarted: number; candidatesFullyValidated: number; candidatesRejectedByInventory: number; candidatesDeferredByBudget: number;
   availabilityBudgetLimit: number; availabilityRequestsUsed: number; availabilityCacheHits: number; budgetRemaining: number;
   classRoundsAttempted: TravelClass[][]; classChecksByClass: Partial<Record<TravelClass, number>>;

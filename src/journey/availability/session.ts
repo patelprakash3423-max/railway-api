@@ -1,3 +1,4 @@
+import {AvailabilityProviderBudget,withAvailabilityProviderBudget,invokeAvailabilityProvider,type ProviderCallDiagnostics} from '../../providers/availability-provider-budget.js';
 import {availabilityEvidence,emitAvailabilityEvidence,observeProviderIdentity,type AvailabilityEvidenceSource,type ProviderIdentityEvidence} from '../../providers/availability-evidence.js';
 import {ProviderConfigurationError} from '../../application/errors.js';
 import {emptyAvailabilityMetrics,observeAvailabilitySdk,observeAvailabilityMetrics,type AvailabilityMetrics} from '../../providers/availability-observation.js';
@@ -6,7 +7,7 @@ import { SearchBudget } from '../utils/search-budget.js';
 import type { TravelClass } from '../types/journey-segment.js';
 import { requestKey, normalizeInventory, errorCategory } from './inventory.js';
 import type { AvailabilityProvider, AvailabilityDiagnostics, InventoryCheck } from './types.js';
-export type SessionStatistics = Pick<AvailabilityDiagnostics,'availabilityBudgetLimit'|'availabilityRequestsUsed'|'availabilityCacheHits'|'budgetRemaining'|'classChecksByClass'|'availableResponses'|'racResponses'|'waitlistResponses'|'unavailableResponses'|'unsupportedClassResponses'|'providerErrors'|'providerErrorCategories'> & AvailabilityMetrics;
+export type SessionStatistics = Pick<AvailabilityDiagnostics,'availabilityBudgetLimit'|'availabilityRequestsUsed'|'availabilityCacheHits'|'budgetRemaining'|'classChecksByClass'|'availableResponses'|'racResponses'|'waitlistResponses'|'unavailableResponses'|'unsupportedClassResponses'|'providerErrors'|'providerErrorCategories'> & AvailabilityMetrics & ProviderCallDiagnostics;
 /** One user request, shared by whole-leg validation and subsequent recovery.
  * Callers serialize atomic groups; exact concurrent requests are also deduplicated. */
 export class AvailabilitySession {
@@ -14,8 +15,8 @@ export class AvailabilitySession {
   readonly unsupported = new Map<string, Set<TravelClass>>();
   private readonly cache = new Map<string, InventoryCheck>();
   private readonly pending = new Map<string, Promise<InventoryCheck>>();
-  private readonly counts: Omit<SessionStatistics,'availabilityBudgetLimit'|'availabilityRequestsUsed'|'budgetRemaining'> = { ...emptyAvailabilityMetrics(),availabilityCacheHits:0,classChecksByClass:{},availableResponses:0,racResponses:0,waitlistResponses:0,unavailableResponses:0,unsupportedClassResponses:0,providerErrors:0,providerErrorCategories:{} };
-  constructor(private readonly provider: AvailabilityProvider, readonly limit: number) { this.budget = new SearchBudget({ maxAvailabilityCalls:limit }); }
+  private readonly counts: Omit<SessionStatistics,'availabilityBudgetLimit'|'availabilityRequestsUsed'|'budgetRemaining'|keyof ProviderCallDiagnostics> = { ...emptyAvailabilityMetrics(),availabilityCacheHits:0,classChecksByClass:{},availableResponses:0,racResponses:0,waitlistResponses:0,unavailableResponses:0,unsupportedClassResponses:0,providerErrors:0,providerErrorCategories:{} };
+  constructor(private readonly provider: AvailabilityProvider, readonly limit: number, readonly providerBudget = new AvailabilityProviderBudget()) { this.budget = new SearchBudget({ maxAvailabilityCalls:limit }); }
   private allowanceEnd = Infinity;
   private readonly skippedClasses = new Set<string>();
   private configurationChecked = false;
@@ -43,14 +44,16 @@ export class AvailabilitySession {
     try { return await work(); } finally { this.allowanceEnd = previous; }
   }
   assertActive(): void { this.provider.assertActive?.(); }
-  get remaining() { return Math.max(0, Math.min(this.limit, this.allowanceEnd) - this.budget.callsUsed); }
+  get logicalRemaining() { return Math.max(0, Math.min(this.limit, this.allowanceEnd) - this.budget.callsUsed); }
+  get remaining() { return this.providerBudget.stopped?0:this.logicalRemaining; }
   peekKey(key: string) { return this.cache.get(key); }
   hasKey(key: string) { return this.cache.has(key) || this.pending.has(key); }
   missingRequests(requests: AvailabilityRequest[]) { return new Set(requests.map(requestKey).filter(key=>!this.hasKey(key))).size; }
   canAfford(requests: AvailabilityRequest[]) { return this.missingRequests(requests) <= this.remaining; }
-  statistics(): SessionStatistics { return { ...this.counts, classChecksByClass:{...this.counts.classChecksByClass},providerErrorCategories:{...this.counts.providerErrorCategories},availabilityBudgetLimit:this.limit,availabilityRequestsUsed:this.budget.callsUsed,attemptedAvailabilityChecks:this.budget.callsUsed,cacheHits:this.counts.availabilityCacheHits,unsupportedClassSkips:this.skippedClasses.size,budgetRemaining:this.remaining }; }
+  statistics(): SessionStatistics { return { ...this.counts, ...this.providerBudget.statistics(), classChecksByClass:{...this.counts.classChecksByClass},providerErrorCategories:{...this.counts.providerErrorCategories},availabilityBudgetLimit:this.limit,availabilityRequestsUsed:this.budget.callsUsed,attemptedAvailabilityChecks:this.budget.callsUsed,cacheHits:this.counts.availabilityCacheHits,unsupportedClassSkips:this.skippedClasses.size,budgetRemaining:this.logicalRemaining }; }
   async get(request: AvailabilityRequest): Promise<InventoryCheck> {
     this.assertActive();
+    this.counts.logicalAvailabilityChecks++;
     this.checkConfiguration();
     const r={...request},key=requestKey(r),hit=this.cache.get(key),pending=this.pending.get(key);
     if(hit||pending){
@@ -59,6 +62,9 @@ export class AvailabilitySession {
       const evidence=availabilityEvidence(r,cached,'SEARCH_LOCAL_CACHE',false,cached.evidence);
       emitAvailabilityEvidence(evidence);return {...cached,evidence};
     }
+    // Once a miss is denied, stop exploratory work. Local evidence above remains
+    // usable, including within an already-admitted logical group.
+    if(this.providerBudget.stopped)return {travelClass:r.travelClass as TravelClass,status:'PROVIDER_ERROR',errorCategory:'PROVIDER_BUDGET_EXHAUSTED'};
     if(this.remaining < 1) throw new Error('Availability allowance exhausted');
     this.budget.consumeCall();const c=r.travelClass as TravelClass;this.counts.classChecksByClass[c]=(this.counts.classChecksByClass[c]??0)+1;
     // Defer invocation one microtask so the in-flight key exists even if a provider throws.
@@ -71,7 +77,7 @@ export class AvailabilitySession {
         if(key==='sharedInflightHits')source='SHARED_INFLIGHT';
         if(key==='sharedCacheHits')source='SHARED_CACHE';
         if(key==='unsupportedEvidenceCacheHits')source='UNSUPPORTED_EVIDENCE_CACHE';
-      },()=>observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;sdkInvoked=true;source='FRESH_PROVIDER';},()=>this.provider.getAvailability({...r})))));}catch(error){
+      },()=>observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;sdkInvoked=true;source='FRESH_PROVIDER';},()=>withAvailabilityProviderBudget(this.providerBudget,()=>this.provider.quotaAccounting==='SDK_INVOCATION'||this.provider.providerCallAccounting==='SCOPED'?this.provider.getAvailability({...r}):invokeAvailabilityProvider(()=>{},()=>this.provider.getAvailability({...r})))))));}catch(error){
         if (error instanceof ProviderConfigurationError) {
           this.counts.localConfigurationFailures++;
           this.configurationFailure = error;

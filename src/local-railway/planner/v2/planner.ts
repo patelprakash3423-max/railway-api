@@ -18,7 +18,7 @@ export function stateDominates(a: SearchState, b: SearchState): boolean {
 const datetime = (minutes: number) => new Date(minutes * 60000).toISOString().slice(0, 16) + ':00+05:30';
 export class LocalJourneyPlannerV2 {
   private readonly limits: V2Limits;
-  constructor(private readonly database: RailwayDatabase, limits: Partial<V2Limits> = {}) {
+  constructor(private readonly database: RailwayDatabase, limits: Partial<V2Limits> = {}, private readonly preserveDirectCandidates = false) {
     this.limits = { ...defaultV2Limits, ...limits };
     for (const [key, value] of Object.entries(this.limits)) if (!Number.isSafeInteger(value) || value < 1 || value > 100000) throw new Error(`Invalid V2 limit ${key}`);
   }
@@ -171,7 +171,11 @@ export class LocalJourneyPlannerV2 {
     const nondominated = bounded.filter(b => !bounded.some(a => candidateDominates(a, b))); d.candidatesAfterDominance = nondominated.length;
     const diverse = diversify(nondominated); d.candidatesAfterDiversity = diverse.length;
     if (diverse.length > limits.maxResults) truncate('results');
-    const journeys = diverse.slice(0, limits.maxResults);
+    // Product inventory search must not lose a direct service to schedule-only
+    // dominance, detour heuristics or the indirect result cap.
+    const journeys = this.preserveDirectCandidates
+      ? [...direct.sort(rankV2),...diverse.filter(j=>j.changes>0).slice(0,limits.maxResults)]
+      : diverse.slice(0, limits.maxResults);
     for (const j of journeys) { j.distanceDetourPercent = d.baselineDistanceKm ? (j.totalDistanceKm / d.baselineDistanceKm - 1) * 100 : 0; j.durationDetourPercent = d.baselineDurationMinutes ? (j.durationMinutes / d.baselineDurationMinutes - 1) * 100 : 0; }
     d.queryDurationMs = performance.now() - start;
     return { kind: 'SCHEDULED_CANDIDATES_ONLY', plannerVersion: 2, dataset, journeys, diagnostics: d };
