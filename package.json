@@ -25,7 +25,8 @@
   "description": "RailKit playground and normalized railway provider",
   "dependencies": {
     "dotenv": "^17.4.2",
-    "railkit": "^5.0.3"
+    "railkit": "^5.0.3",
+    "redis": "^5.12.1"
   },
   "private": true,
   "type": "module",

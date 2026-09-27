@@ -77,6 +77,7 @@ export class AvailabilitySession {
         if(key==='sharedInflightHits')source='SHARED_INFLIGHT';
         if(key==='sharedCacheHits')source='SHARED_CACHE';
         if(key==='persistentCacheHits')source='PERSISTENT_CACHE';
+        if(key==='redisCacheHits')source='REDIS_CACHE';
         if(key==='unsupportedEvidenceCacheHits')source='UNSUPPORTED_EVIDENCE_CACHE';
       },()=>observeAvailabilitySdk(()=>{this.counts.actualSdkInvocations++;sdkInvoked=true;source='FRESH_PROVIDER';},()=>withAvailabilityProviderBudget(this.providerBudget,()=>this.provider.quotaAccounting==='SDK_INVOCATION'||this.provider.providerCallAccounting==='SCOPED'?this.provider.getAvailability({...r}):invokeAvailabilityProvider(()=>{},()=>this.provider.getAvailability({...r})))))));}catch(error){
         if (error instanceof ProviderConfigurationError) {

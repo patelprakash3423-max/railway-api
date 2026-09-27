@@ -4,7 +4,7 @@ Audit date: 2026-09-23. Scope: the current working tree, including the existing 
 
 ## Read this before changing availability discovery
 
-This is both a record of **current behavior** and the **required target design**. Sections labelled target/proposed are not claims that the feature already exists. **Phase 1 is now implemented:** per-search provider admission/accounting and the configurable maximum of 300. **Phase 2A is now implemented:** a separate SQLite latest-observation store and centralized configurable freshness contract. Redis, background refresh and dynamic EXACT_MATRIX/ADAPTIVE_GRAPH selection remain **not implemented**. The original audit sections below are historical baseline findings where the Phase 1 and Phase 2A updates explicitly supersede them.
+This is both a record of **current behavior** and the **required target design**. Sections labelled target/proposed are not claims that the feature already exists. **Phase 1 is now implemented:** per-search provider admission/accounting and the configurable maximum of 300. **Phase 2A is now implemented:** a separate SQLite latest-observation store and centralized configurable freshness contract. **Phase 2B is now implemented:** optional Redis distributed evidence caching. Distributed singleflight, background refresh and dynamic EXACT_MATRIX/ADAPTIVE_GRAPH selection remain **not implemented**. The original audit sections below are historical baseline findings where the Phase 1, Phase 2A and Phase 2B updates explicitly supersede them.
 
 The target production policy is **at most 300 actual uncached availability provider requests per user search**, shared across all trains and search stages. The executable now independently enforces that provider ceiling. The earlier 32,768-search / 8,192-candidate limits remain as defensive logical-check ceilings, not provider-call allowances; adaptive scheduling has not replaced them.
 
@@ -118,6 +118,79 @@ New API/completion diagnostics:
 Owner metrics are not multiplied across inflight followers. All existing local/shared/unsupported metrics and Phase 1 logical/provider/budget diagnostics remain. These layer counters must not be blindly summed with their compatibility aliases.
 
 Recommended Phase 2B: introduce a Redis hot-cache adapter using this same identity, validation and freshness envelope, with backend failure and remaining-TTL tests. Cross-instance dedupe/account quotas require a separately tested coordination design; Redis caching alone does not provide either. Adaptive evidence search, history writes and demand-aware refresh remain later work and were not started.
+
+## Implemented Phase 2B: optional Redis evidence cache
+
+Completed by resuming the existing uncommitted Phase 2B working tree after reading this document and reviewing every changed file, Phase 1 admission, Phase 2A storage and scheduler ownership. Scope is distributed evidence reuse only. No search/ranking redesign, adaptive graph, EXACT_MATRIX selector, history, workers, cron, provider prewarming or deployment is included.
+
+### Runtime and client decision
+
+The repository uses npm/package-lock.json, targets Node 24.x, and documents a Render Node service with manually configured environment variables and a separately provisioned writable observation volume. No Redis client, service declaration or deployment provisioning existed. This phase adds the mature **node-redis `redis` client (locked at 5.12.1, Node >=18.19)** behind the small `AvailabilityRedisAdapter` interface. See [the official production configuration guidance](https://redis.io/docs/latest/develop/clients/nodejs/produsage/). The implementation requires **Redis >=6.2** for absolute millisecond expiration (`PXAT`). No Redis service is provisioned and tests use an in-memory adapter/mocked client without a server.
+
+Configuration follows existing validated environment conventions:
+
+| Variable | Default / accepted values |
+| --- | --- |
+| REDIS_ENABLED | `false`; only explicit `true` enables Redis |
+| REDIS_URL | Required valid `redis://` or `rediss://` URL when enabled; ignored when disabled |
+| REDIS_OPERATION_TIMEOUT_MS | 150; positive safe integer, maximum 1,000 ms; covers each operation including lazy connection |
+| REDIS_RETRY_COOLDOWN_MS | 1,000; positive safe integer, maximum 60,000 ms; demand-only retry after connection/command failure |
+
+Connection is lazy. Disabled Redis does not construct a client or initiate a connection. node-redis uses `disableOfflineQueue: true`, `reconnectStrategy: false`, a bounded connection timeout and a 64-command queue cap. A failed/hanging operation falls back immediately or at its operation deadline; timeout/cancellation destroys the connection, and a late connection cannot dispatch the abandoned command. There is no reconnect loop or background refresh. Shutdown closes SQLite and destroys Redis connections. URL/driver errors are never logged or exposed through diagnostics; invalid explicit configuration raises a sanitized variable-name error.
+
+### Lookup, writes and Phase 1 admission
+
+Exact order: **search-local cache/pending reuse -> existing process hot INVENTORY/UNSUPPORTED_CLASS cache -> existing local inflight owner/queue -> Redis -> SQLite latest observation -> unchanged Phase 1 admission -> provider**. Redis and SQLite work remains inside the existing scheduler owner/slot and request cancellation/deadline. Local followers share lookup/fetch/write work and cost zero additional provider attempts.
+
+A fresh Redis hit skips SQLite and provider entirely. Redis miss/stale/invalid/read-error continues to SQLite. A fresh SQLite observation is promoted into Redis with its remaining freshness, then returned; freshness is rechecked after promotion so network latency cannot publish an observation that expired during promotion. Redis write failure does not invalidate a SQLite hit. A stale/missing/failed SQLite lookup continues to the exact original provider gate. Redis never grants provider admission or changes the per-search cap, quota or logical limits.
+
+Provider success: existing normalization and observation validation -> SQLite upsert -> Redis population -> local hot cache -> return. **If SQLite write fails, valid provider evidence may still populate Redis and be returned.** This preserves Phase 2A's existing fail-open durability semantics: validated provider observation establishes truth; successful database persistence is not a prerequisite for returning that evidence. Redis is optional acceleration, not the sole durable record. Losing both stores creates an ordinary budgeted provider miss. Redis write/timeout failure never becomes provider failure. UNKNOWN, generic failures, unsupported class and unsupported booking do not become inventory observations; the existing separate unsupported-class cache remains unchanged. WAITLIST, NOT_AVAILABLE and RAC retain their exact normalized meanings.
+
+### Canonical key, value and expiration
+
+Key: `railway:availability:` followed by **the exact Phase 2A `observationKey(identity)` JSON array**, i.e. `["railkit:availability:v1", train, from, to, boardingDate, class, quota]`. Redis does not define a second canonical identity. Changing the shared provider/schema namespace permits future invalidation without flushing unrelated Redis data. Normal searches never scan or delete a namespace.
+
+Value: JSON serialization of the same allowlisted `AvailabilityObservation` used by SQLite: `{namespace, identity, observedAt, result}`. `result` contains validated normalized provider/request identity, one requested-date inventory row, optional validated fare/bookability and identity-presence evidence. Arbitrary raw provider envelopes, secrets and errors are excluded; serialized values are capped at 8,192 characters. Reads parse, enforce this bound, call the same `validateObservation` with the requested identity, validate timestamps and independently apply the same `AvailabilityFreshnessPolicy`. Redis TTL alone is never evidence of freshness. Corrupt/mismatched payloads are read errors; valid expired, past-journey or future-dated evidence is stale. Neither can become current inventory.
+
+`expiresAt = policy.freshUntil(journeyDate, originalObservedAt, now)`; `remainingTTL = expiresAt - now`. Only positive remaining lifetime is written. The adapter uses `SET ... PXAT expiresAt` inside an atomic latest-write script, rather than applying a new full TTL or adding command latency to remaining TTL. A six-hour observation already aged five hours forty minutes has twenty minutes left. Promotion, Redis reuse, local hot reuse and session reuse never change `observedAt`. Hot-cache expiration remains the minimum of its existing TTL and the observation expiration; session reuse checks the same metadata. Redis server clock skew can cause earlier misses or leave physically expired evidence longer, but independent application validation still rejects evidence stale under the application clock. Synchronized clocks across instances remain an operational requirement.
+
+An atomic Lua compare/write retains an existing record when its observation timestamp is newer or equal. GET, comparison and SET run in one EVAL; [Redis guarantees atomic script execution](https://redis.io/docs/latest/develop/programmability/eval-intro/), so another writer cannot interleave between them. Slower/older writers and SQLite promotions cannot replace newer Redis evidence or refresh its expiration. Invalid JSON can be replaced. A write may have reached Redis when its reply times out; it still carries the original absolute expiration and is independently revalidated on read. Redis access is assumed to be restricted to trusted application writers; validation is not cryptographic provenance.
+
+### Distributed singleflight decision and remaining limitation
+
+**Deferred; no Redis fetch locks or distributed ownership metrics are implemented.** The existing scheduler deliberately retains a physical slot for a provider callback that ignores cancellation until that callback settles. A fixed distributed lease can expire while that work still runs. Bounded follower waiting followed by unrestricted fetch fallback can then recreate a stampede; preventing that needs explicit lease renewal/fencing and a follower-timeout/admission policy integrated with scheduler ownership and provider deadlines. That broader coordination change is deferred under the user's correctness-first Phase 2B allowance.
+
+Existing local inflight dedupe remains intact and tested with twenty waiters. Independent instances reuse completed fresh Redis observations, but **simultaneous cold or expired misses can still issue one provider fetch per local owner/instance**. Redis outage also loses cross-instance reuse. Per-user Phase 1 budgets remain enforced independently; process quotas remain process-local, not account-wide protection. A dedicated coordination phase must test owner crash, lease expiry during uncooperative transport, fenced publication/release, cancellation, bounded followers and account-wide quotas before claiming stampede prevention across instances.
+
+### Diagnostics and verification contract
+
+API diagnostics and completion logs add `redisCacheHits`, `redisCacheMisses`, `redisCacheStale`, `redisCacheReadErrors`, and `redisCacheWriteErrors`. Hits are attributed only to the executing local owner and use evidence source `REDIS_CACHE`; followers retain `SHARED_INFLIGHT`. A Redis hit is not also a SQLite/hot hit. Read errors/stale outcomes do not also increment Redis misses. SQLite promotion counts as a persistent hit, not a Redis hit. Existing hot/persistent, SDK/logical and provider-budget diagnostics remain intact. No connection strings or payloads are included.
+
+Offline regressions live in `src/tests/availability-redis.test.ts` and `src/tests/availability-redis-client.test.ts`. They cover fresh/miss/stale/corrupt/mismatched Redis evidence, negative truth, original observation time, remaining TTL, fail-open read/write/hanging operations, disabled mode, local dedupe, budget interaction, production-client connection lifecycle, sanitized failures and API diagnostics. A fake-clock regression carries the same provider observation through SQLite promotion, Redis, hot cache and session reuse and verifies exact original expiration. No real Redis or RailKit server is used; server-side integration/failover/load behavior remains unverified.
+
+Recommended Phase 3 entry point (not started): use `AvailabilitySession`'s validated observation metadata and bounded provider budget to design the explicit cost selector/adaptive frontier at `journey/search-policy.ts` and `journey/orchestrator.ts`, preserving recovery/solver truth and adding route-wide fairness regressions. Distributed coordination should be a separately scoped prerequisite for multi-instance operation; background refresh/history remain later work.
+
+### Phase 2B completion verification (2026-09-26)
+
+The resumed review retained the implementation and added two missing regressions: a delayed older writer/equal-time promotion must preserve newer Redis truth and expiration, and a hanging write must destroy the connection and suppress further dispatch during cooldown. The ordering test exercises the adapter contract with an in-memory Redis fake; the client test verifies the exact production EVAL script and arguments. The Lua source was reviewed against Redis's atomic execution contract, but was not executed against a server. Real Redis integration, failover and load behavior remain unverified.
+
+Changed files (15 total): `.env.example`, `package.json`, `package-lock.json`, this document, `src/config/availability-redis.ts`, `src/providers/observations/{cache,redis-cache,redis-client}.ts`, `src/providers/railkit/availability-scheduler.ts`, `src/providers/{availability-evidence,availability-observation}.ts`, `src/journey/availability/session.ts`, `src/api/services/journey-v2-service.ts`, and `src/tests/{availability-redis,availability-redis-client}.test.ts`.
+
+- Redis cache/client regressions: **53 passed**, included in both final suites (44 cache/integration and 9 client lifecycle tests).
+- Focused offline suite: **445 passed, 0 failed**. Included Phase 2A observation-store/persistence (40 tests), Phase 1 provider budget (20 tests), accounting, scheduler, provenance, unsupported/provider evidence, V2 availability/recovery, direct matrix, mixed-class recovery, WAITLIST gaps, journey recovery and V2 API tests.
+- `npm test`: **978 passed, 0 failed, 0 skipped**, with `src/test-support/local-network-only.mjs` enabled. Windows test-worker `spawn EPERM` required the approved outside-sandbox execution; the network guard stayed enabled.
+- `npm run typecheck`: passed after correcting a literal type in the added test fixture.
+- `npm run build`: passed; no application server started.
+- `git diff --check`: passed with only Git LF/CRLF conversion notices. New files were also checked for trailing whitespace.
+- Validation runtime: installed Node **22.21.0**. Repository target remains **24.x**, compatible with installed/locked node-redis **5.12.1** (Node >=18.19); Node 24 runtime validation was not performed here.
+- Final diff review found no unrelated edits, debug logging, execution-path TODOs or credentials. Only Redis and its dependency tree changed in the lockfile. Phase 1 admission/transport/quota, Phase 2A model/freshness/SQLite store and the network guard have no diff.
+- No live provider calls, real Redis requirement, distributed locks, Phase 3 implementation, commits, pushes or deployment.
+
+Focused command (all providers mocked; Redis uses fakes):
+
+```powershell
+node --import ./src/test-support/local-network-only.mjs --import tsx --test src/tests/availability-redis.test.ts src/tests/availability-redis-client.test.ts src/tests/availability-observation-store.test.ts src/tests/availability-persistence.test.ts src/tests/availability-provider-budget.test.ts src/tests/availability-accounting.test.ts src/tests/availability-scheduler.test.ts src/tests/availability-provenance.test.ts src/tests/unsupported-evidence-cache.test.ts src/tests/provider-evidence.test.ts src/local-railway/tests/availability-v2.test.ts src/local-railway/tests/recovery-v2.test.ts src/local-railway/tests/direct-matrix.test.ts src/local-railway/tests/phase-c-recovery.test.ts src/local-railway/tests/phase-d2-gap.test.ts src/local-railway/tests/journey-recovery-v2.test.ts src/local-railway/tests/journey-v2-api.test.ts
+```
 
 ## Product goal and non-negotiable truth
 

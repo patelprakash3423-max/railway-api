@@ -2,6 +2,7 @@ import {AvailabilityObservations} from '../observations/cache.js';
 import {SqliteAvailabilityObservationStore} from '../observations/sqlite-store.js';
 import {AvailabilityFreshnessPolicy} from '../observations/freshness.js';
 import {availabilityStateConfig} from '../../config/availability-state.js';
+import {configuredRedisAvailabilityCache} from '../observations/redis-client.js';
 import {attachObservation,observationEnvelope,type ObservationMetadata} from '../observations/model.js';
 import {providerIdentityObserved,type ProviderIdentityEvidence} from '../availability-evidence.js';
 import {availabilityRequestKey} from '../../utils/availability-key.js';
@@ -18,7 +19,7 @@ import type {AvailabilityRequest} from '../../domain/types/availability.js';
 type CacheKind='INVENTORY'|'UNSUPPORTED_CLASS';
 type CachedEvidence={expires:number;value:unknown;observation?:ObservationMetadata};
 type Waiter={signal?:AbortSignal;run:ReturnType<typeof AsyncLocalStorage.snapshot>;resolve:(v:unknown)=>void;reject:(e:unknown)=>void;cleanup:()=>void;queuedAt:number;waited:boolean};
-type Entry={observation?:ObservationMetadata;persistent?:boolean;observedAt?:number;identityEvidence?:ProviderIdentityEvidence;timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
+type Entry={observation?:ObservationMetadata;reusedObservation?:boolean;observedAt?:number;identityEvidence?:ProviderIdentityEvidence;timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
 /** One default instance covers every raw/normalized availability SDK entry point.
  * Queue owners rotate after each start. Running calls are never preempted.
  * Aborted/time-out SDKs retain their slots until the SDK promise actually settles:
@@ -32,7 +33,7 @@ export class AvailabilityScheduler {
  // One cache mechanism with independent retention/capacity policies.
  private caches:Record<CacheKind,Map<string,CachedEvidence>>={INVENTORY:new Map(),UNSUPPORTED_CLASS:new Map()};
  constructor(private readonly config:HardeningConfig,private readonly now=Date.now,private readonly observations?:AvailabilityObservations){this.quota=new ProviderQuota(config,now);}
- closeObservations(){this.observations?.store.close();}
+ closeObservations(){this.observations?.close();}
  execute(request:AvailabilityRequest,invoke:()=>Promise<unknown>):Promise<unknown>{
   const signal=availabilitySignal();signal?.throwIfAborted();
   const key=availabilityRequestKey(request);
@@ -93,10 +94,10 @@ export class AvailabilityScheduler {
    const task=first.run(()=>inAvailabilityScope(entry.controller.signal,async()=>{
     entry.controller.signal.throwIfAborted();
     if(this.observations){
-     const lookup=await this.observations.lookup(entry.request,this.now);
+     const lookup=await this.observations.lookup(entry.request,this.now,entry.controller.signal);
      entry.controller.signal.throwIfAborted();
      if(lookup.state==='FRESH'){
-      entry.persistent=true;entry.observation={observedAt:lookup.observation.observedAt,freshUntil:lookup.freshUntil};
+      entry.reusedObservation=true;entry.observation={observedAt:lookup.observation.observedAt,freshUntil:lookup.freshUntil};
       return observationEnvelope(lookup.observation.result);
      }
     }
@@ -127,8 +128,8 @@ export class AvailabilityScheduler {
     if(normalized.providerState==='SUCCESS'&&matching.length===1&&
        ['AVAILABLE','RAC','WAITLIST','NOT_AVAILABLE'].includes(matching[0].state)&&
        !(matching[0].canBook===false&&['AVAILABLE','RAC'].includes(matching[0].state))){
-     if(this.observations&&!entry.persistent){
-      const observation=await first.run(()=>this.observations!.remember(normalized,entry.observedAt!));
+     if(this.observations&&!entry.reusedObservation){
+      const observation=await first.run(()=>this.observations!.remember(normalized,entry.observedAt!,this.now,entry.controller.signal));
       if(entry.controller.signal.aborted)return;
       if(observation)entry.observation={observedAt:observation.observedAt,freshUntil:this.observations.policy.freshUntil(entry.request.journeyDate,observation.observedAt,this.now())};
      }
@@ -169,7 +170,7 @@ export class AvailabilityScheduler {
 }
 let shared:AvailabilityScheduler|undefined;
 export function processAvailabilityScheduler(){
- if(!shared){const config=availabilityStateConfig();shared=new AvailabilityScheduler(hardeningConfig(),Date.now,new AvailabilityObservations(new SqliteAvailabilityObservationStore(config),new AvailabilityFreshnessPolicy(config.freshnessMs)));}
+ if(!shared){const config=availabilityStateConfig();shared=new AvailabilityScheduler(hardeningConfig(),Date.now,new AvailabilityObservations(new SqliteAvailabilityObservationStore(config),new AvailabilityFreshnessPolicy(config.freshnessMs),configuredRedisAvailabilityCache()));}
  return shared;
 }
 export function closeProcessAvailabilityObservations(){shared?.closeObservations();}

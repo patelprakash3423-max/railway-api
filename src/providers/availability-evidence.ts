@@ -5,7 +5,7 @@ export const identityPresenceFields=['providerTrainIdentityPresent','providerFro
 export type ProviderIdentityEvidence=Record<typeof identityPresenceFields[number],boolean>&{
  providerIdentityValidation:'VALIDATED'|'REJECTED'|'NOT_PROVIDED'|'NOT_EVALUATED';
 };
-export type AvailabilityEvidenceSource='FRESH_PROVIDER'|'SHARED_INFLIGHT'|'SHARED_CACHE'|'UNSUPPORTED_EVIDENCE_CACHE'|'SEARCH_LOCAL_CACHE'|'NOT_OBSERVED'|'PERSISTENT_CACHE';
+export type AvailabilityEvidenceSource='FRESH_PROVIDER'|'SHARED_INFLIGHT'|'SHARED_CACHE'|'UNSUPPORTED_EVIDENCE_CACHE'|'SEARCH_LOCAL_CACHE'|'NOT_OBSERVED'|'PERSISTENT_CACHE'|'REDIS_CACHE';
 export interface AvailabilityEvidence extends ProviderIdentityEvidence {
  observedAt?:number;freshUntil?:number;
  trainNumber:string;from:string;to:string;requestedDate:string;travelClass:string;quota:'GN';
