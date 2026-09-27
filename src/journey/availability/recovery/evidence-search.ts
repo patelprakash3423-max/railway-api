@@ -68,7 +68,9 @@ export async function searchEvidenceGraph(ctx:EvidenceSearchContext):Promise<Evi
   ctx.active();
   if(ctx.remainingTime()<=0){reason='DEADLINE';return false;}
   const cached=ctx.known(e);
-  if(!cached&&freshChecks>=ctx.logicalAllowance){reason='LOGICAL_SAFETY_LIMIT';return false;}
+  // Provider denial also reduces the session's effective logical allowance to
+  // zero. Preserve the stop boundary, but report the resource actually exhausted.
+  if(!cached&&freshChecks>=ctx.logicalAllowance){reason=ctx.providerRemaining()===0?'PROVIDER_BUDGET_EXHAUSTED':'LOGICAL_SAFETY_LIMIT';return false;}
   // This is a scheduling reservation, not provider admission. The global gate
   // still owns admission, retries, quotas, and cache-before-budget behavior.
   if(!cached&&ctx.providerRemaining()>0&&ctx.providerUsed()-started>=ctx.providerAllowance){reason='FAIRNESS_RESERVE';return false;}

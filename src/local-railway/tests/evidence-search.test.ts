@@ -5,7 +5,7 @@ import {LocalJourneyPlannerV2} from '../planner/v2/planner.js';
 import {JourneyRecoveryOrchestrator} from '../../journey/availability/journey/orchestrator.js';
 import {invokeAvailabilityProvider} from '../../providers/availability-provider-budget.js';
 import type {AvailabilityRequest,AvailabilityResult} from '../../domain/types/availability.js';
-import {matrixCost,routeWideNodes} from '../../journey/availability/recovery/evidence-search.js';
+import {matrixCost,routeWideNodes,searchEvidenceGraph} from '../../journey/availability/recovery/evidence-search.js';
 import type {LocalDataset} from '../types.js';
 
 const date='18-09-2099',five=['SL','3A','2A','CC','2S'];
@@ -89,6 +89,29 @@ test('five provider attempts is a hard cap, unchecked edges stay unknown',async 
  const f=fixture(t),p=provider(),r=await new JourneyRecoveryOrchestrator(f.db,p,{providerCallBudgetLimit:5}).validate({...f.input,requestedClasses:['SL']});
  assert.equal(p.attempts.length,5);assert.equal(r.diagnostics.providerAvailabilityCalls,5);assert.equal(r.diagnostics.stopReason,'PROVIDER_BUDGET_EXHAUSTED');
  assert.equal(r.diagnostics.checkedMatrixEdges,5);assert.equal(r.journeys[0].unknownDistanceKm,1900);
+});
+
+test('provider denial after ten dispatches is reported for every direct train without losing FULL evidence',async t=>{
+ const f=fixture(t,9,4),p=provider(r=>r.trainNumber==='43004'&&r.travelClass==='3A'?'AVAILABLE':'WAITLIST');
+ const r=await new JourneyRecoveryOrchestrator(f.db,p,{providerCallBudgetLimit:10}).validate(f.input),d=r.diagnostics;
+ assert.equal(p.logical.length,11);assert.equal(p.attempts.length,10);
+ assert.deepEqual(p.attempts,p.logical.slice(0,10));
+ assert.equal(d.logicalAvailabilityChecks,11);assert.equal(d.providerAvailabilityCalls,10);
+ assert.equal(d.providerCallBudgetLimit,10);assert.equal(d.providerCallBudgetRemaining,0);assert.equal(d.providerCallBudgetExhausted,true);
+ assert.equal(d.providerErrorCategories.PROVIDER_BUDGET_EXHAUSTED,1);assert.ok(d.budgetRemaining>0);
+ assert.equal(d.stopReason,'PROVIDER_BUDGET_EXHAUSTED');assert.equal(d.directExploration.length,4);
+ for(const train of d.directExploration)assert.equal(train.stopReason,'PROVIDER_BUDGET_EXHAUSTED',train.trainNumber);
+ assert.equal(d.recoveryIntervalRequests,0);assert.equal(d.checkedMatrixEdges,10);
+ assert.equal(d.fullReservedJourneys,1);assert.equal(d.partialRecoveryJourneys,0);
+ assert.equal(r.journeys[0].legs[0].trainNumber,'43004');assert.equal(r.journeys[0].reservedCoverageRatio,1);
+});
+
+test('zero logical allowance retains its own stop reason while provider allowance remains',async()=>{
+ const d=await searchEvidenceGraph({nodes:3,classes:['SL'],providerAllowance:10,logicalAllowance:0,enough:false,
+  providerUsed:()=>0,providerRemaining:()=>10,remainingTime:()=>10000,active:()=>{},known:()=>undefined,
+  check:async()=>{assert.fail('A reporting fix must not dispatch another check');},
+  solve:()=>({full:0,partial:0,reserved:0,gaps:[]})});
+ assert.equal(d.stopReason,'LOGICAL_SAFETY_LIMIT');assert.equal(d.checkedMatrixEdges,0);
 });
 test('adaptive cache-only search can check more than 300 logical edges',async t=>{
  const f=fixture(t),p=provider(undefined,()=>true),r=await new JourneyRecoveryOrchestrator(f.db,p,{providerCallBudgetLimit:5}).validate(f.input);

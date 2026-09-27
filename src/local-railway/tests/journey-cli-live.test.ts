@@ -8,11 +8,11 @@ import {RailwayDatabase} from '../database.js';
 import {runJourneyCli} from '../../journey/availability/journey/cli-runner.js';
 import type {AvailabilityRequest,AvailabilityResult} from '../../domain/types/availability.js';
 
-function setup(t:TestContext){
+function setup(t:TestContext,trainCount=30){
   const dir=mkdtempSync(join(tmpdir(),'journey-live-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
   const path=join(dir,'railway.sqlite'),db=new RailwayDatabase(path);
-  const trains:LocalDataset['trains']=Array.from({length:30},(_,i)=>({number:String(40001+i),name:`Train ${i}`,sourceCode:'AAA',destinationCode:'CCC',runningDaysRaw:'Daily',runningDays:['MON','TUE','WED','THU','FRI','SAT','SUN']}));
-  db.replace({stations:['AAA','BBB','CCC'].map(code=>({code,name:code})),trains,stops:trains.flatMap(train=>['AAA','BBB','CCC'].map((stationCode,i)=>({trainNumber:train.number,stationCode,sequence:i+1,dayOffset:0,arrivalTime:i?['06:00','09:00','12:00'][i]:undefined,departureTime:i<2?['06:00','09:00','12:00'][i]:undefined,distanceKm:i*300}))),metadata:{source:'RAILPULL_NTES',importedAt:'2026-09-14T00:00:00Z',trainCount:30,stationCount:3,stopCount:90}});db.close();
+  const trains:LocalDataset['trains']=Array.from({length:trainCount},(_,i)=>({number:String(40001+i),name:`Train ${i}`,sourceCode:'AAA',destinationCode:'CCC',runningDaysRaw:'Daily',runningDays:['MON','TUE','WED','THU','FRI','SAT','SUN']}));
+  db.replace({stations:['AAA','BBB','CCC'].map(code=>({code,name:code})),trains,stops:trains.flatMap(train=>['AAA','BBB','CCC'].map((stationCode,i)=>({trainNumber:train.number,stationCode,sequence:i+1,dayOffset:0,arrivalTime:i?['06:00','09:00','12:00'][i]:undefined,departureTime:i<2?['06:00','09:00','12:00'][i]:undefined,distanceKm:i*300}))),metadata:{source:'RAILPULL_NTES',importedAt:'2026-09-14T00:00:00Z',trainCount,stationCount:3,stopCount:trainCount*3}});db.close();
   return ['AAA','CCC','18-09-2026','--db',path,'--classes','ALL','--mode','STANDARD'];
 }
 function stub(){
@@ -36,6 +36,25 @@ test('journey CLI confirmed live stub uses the bounded matrix budget with recove
   const r=await runJourneyCli([...args,'--live','--confirm-live','--json'],{...p,log:s=>output.push(s),summary:s=>summaries.push(s)});
   const d=r.diagnostics;assert.equal(d.availabilityBudgetLimit,32768);assert.ok(p.calls.length<=300);assert.ok(p.calls.length>=24);assert.equal(p.calls.length,d.providerAvailabilityCalls);assert.equal(p.calls.length,300);assert.equal(d.providerCallBudgetExhausted,true);assert.ok(d.availabilityRequestsUsed>p.calls.length);assert.equal(d.wholeLegRequests+d.recoveryIntervalRequests,d.availabilityRequestsUsed);assert.ok(d.wholeLegRequests>0);assert.ok(d.recoveryIntervalRequests>0);assert.deepEqual(p.counts(),{created:1,discovery:0,info:0});
   const payload=JSON.parse(output[0]);assert.equal(payload.inventoryMode,'LIVE');assert.ok(!('syntheticSupportedClasses'in payload));
-  for(const label of ['Planner candidates','Whole-leg requests','Recovery requests','Availability calls','Cache hits','Budget used','Fully reserved','Full split','Partial recovery','Scheduled fallback','Inventory incomplete','Global budget','Whole-leg calls','Recovery calls','Released reserve calls','Budget remaining','Recovery reserve initial','Recovery reserve used','Recovery reserve released','Candidates checked whole-leg','Candidates sent to recovery','Recovery attempts','Recovery successes','AVAILABLE','RAC','WAITLIST','UNSUPPORTED_CLASS','PROVIDER_ERROR'])assert.ok(summaries[0].includes(`${label}: `));
+  for(const label of ['Planner candidates','Whole-leg requests','Recovery requests','Logical availability checks','Actual provider availability calls','Cache hits','Budget used','Fully reserved','Full split','Partial recovery','Scheduled fallback','Inventory incomplete','Global budget','Whole-leg calls','Recovery calls','Released reserve calls','Budget remaining','Recovery reserve initial','Recovery reserve used','Recovery reserve released','Candidates checked whole-leg','Candidates sent to recovery','Recovery attempts','Recovery successes','AVAILABLE','RAC','WAITLIST','UNSUPPORTED_CLASS','PROVIDER_ERROR'])assert.ok(summaries[0].includes(`${label}: `));
   assert.match(summaries[0],/Discovery calls: 0\nTrain-info calls: 0/);
+});
+
+test('journey CLI separates eleven logical checks from ten dispatched provider calls after denial',async t=>{
+  const previous=process.env.JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT;
+  process.env.JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT='10';
+  t.after(()=>{if(previous===undefined)delete process.env.JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT;else process.env.JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT=previous;});
+  const args=setup(t,4),p=stub(),output:string[]=[],summaries:string[]=[];
+  const r=await runJourneyCli([...args,'--live','--confirm-live','--json'],{...p,log:s=>output.push(s),summary:s=>summaries.push(s)});
+  const d=r.diagnostics;
+  assert.equal(d.logicalAvailabilityChecks,11);assert.equal(d.providerAvailabilityCalls,10);assert.equal(p.calls.length,10);
+  assert.equal(d.providerCallBudgetLimit,10);assert.equal(d.providerCallBudgetRemaining,0);assert.equal(d.providerCallBudgetExhausted,true);
+  assert.equal(d.providerErrorCategories.PROVIDER_BUDGET_EXHAUSTED,1);assert.ok(d.budgetRemaining>0);
+  assert.equal(d.stopReason,'PROVIDER_BUDGET_EXHAUSTED');
+  assert.match(summaries[0],/^Logical availability checks: 11$/m);
+  assert.match(summaries[0],/^Actual provider availability calls: 10$/m);
+  assert.doesNotMatch(summaries[0],/^Availability calls:/m);
+  assert.equal(JSON.parse(output[0]).diagnostics.logicalAvailabilityChecks,11);
+  assert.equal(JSON.parse(output[0]).diagnostics.providerAvailabilityCalls,10);
+  assert.deepEqual(p.counts(),{created:1,discovery:0,info:0});
 });
