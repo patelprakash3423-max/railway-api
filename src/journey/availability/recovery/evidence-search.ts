@@ -16,6 +16,7 @@ export interface CandidateRevisitDiagnostics {
  turns:{round:number;trainNumber:string;providerCalls:number;logicalChecks:number;stopReason:EvidenceStopReason}[];
 }
 export interface EvidenceSearchContext {
+ balancedFairness?:boolean;
  nodes:number;scopeNodes?:number;classes:TravelClass[];providerAllowance:number;logicalAllowance:number;enough:boolean;
  providerUsed:()=>number;providerRemaining:()=>number;remainingTime:()=>number;active:()=>void;
  known:(edge:EvidenceEdge)=>InventoryCheck|undefined;
@@ -29,6 +30,25 @@ const key=(e:EvidenceEdge)=>`${e.a}:${e.b}:${e.c}`;
 /** Alternating ends gives the tail an opportunity in the very first batch. */
 export function* routeWideNodes(first:number,last:number):Generator<number>{
  while(first<=last){yield first++;if(first<=last)yield last--;}
+}
+/** Keep the established early/tail opportunities, then bisect unvisited regions. */
+export function* balancedRouteNodes(first:number,last:number):Generator<number>{
+ const middle=Math.ceil((first+last)/2),seen=new Set<number>();
+ for(const node of [first,last,middle,last-1])if(node>=first&&node<=last&&!seen.has(node)){seen.add(node);yield node;}
+ const anchors=[...seen].sort((a,b)=>a-b),ranges=anchors.slice(1).map((b,i)=>({a:anchors[i],b}));
+ for(let index=0;index<ranges.length;index++){
+  const {a,b}=ranges[index];if(b-a<=1)continue;
+  const node=b<=middle?Math.floor((a+b)/2):Math.ceil((a+b)/2);
+  if(!seen.has(node)){seen.add(node);yield node;}
+  ranges.push({a,b:node},{a:node,b});
+ }
+}
+/** Give all classes an early regional opportunity, then widen across the route. */
+export function* balancedSpine(nodes:number,classes:TravelClass[]):Generator<{k:number;c:TravelClass}>{
+ const stations=[...balancedRouteNodes(1,nodes-2)];
+ const representatives=stations.slice(0,3),remaining=stations.slice(3);
+ for(const c of classes)for(const k of representatives)yield {k,c};
+ for(let pass=0;pass<classes.length;pass++)for(const [index,k]of remaining.entries())yield {k,c:classes[(index+pass)%classes.length]};
 }
 export async function searchEvidenceGraph(ctx:EvidenceSearchContext):Promise<EvidenceSearchDiagnostics>{
  const possibleMatrixEdges=matrixCost(ctx.scopeNodes??ctx.nodes,ctx.classes.length),last=ctx.nodes-1;
@@ -80,12 +100,15 @@ export async function searchEvidenceGraph(ctx:EvidenceSearchContext):Promise<Evi
  if(!reason&&searchMode==='EXACT_MATRIX'){
   for(const e of matrix())if(!await observe(e))break;
  }else if(!reason){
-  // One station/class pair per turn. Rotate classes across stations and passes;
-  // never exhaust all classes at an early station before reaching the tail.
+  // Retain the old pass/refinement cadence, but distribute its endpoint pairs
+  // over regional representatives, then the rest of the route. Whole-leg
+  // breadth and gap priorities are unchanged.
+  const balanced=ctx.balancedFairness!==false?balancedSpine(ctx.nodes,ctx.classes):undefined;
   spine:for(let pass=0;pass<ctx.classes.length;pass++){
    let index=0;
-   for(const k of routeWideNodes(1,last-1)){
-    const c=ctx.classes[(index+pass)%ctx.classes.length];index++;
+   for(const legacyStation of routeWideNodes(1,last-1)){
+    const next=balanced?.next().value;
+    const k=next?.k??legacyStation,c=next?.c??ctx.classes[(index+pass)%ctx.classes.length];index++;
     for(const e of [{a:0,b:k,c},{a:k,b:last,c}]){
      if(!await observe(e))break spine;
      if(++batch>=evidenceSearchPolicy.batchSize&&!solveBatch())break spine;

@@ -1,0 +1,2537 @@
+[
+  {
+    "id": "small-exact",
+    "group": "size",
+    "budget": 300,
+    "before": {
+      "calls": 20,
+      "full": 0,
+      "partial": 0,
+      "checked": 20,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 20,
+      "full": 0,
+      "partial": 0,
+      "checked": 20,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "representative-cold",
+    "group": "size",
+    "budget": 300,
+    "before": {
+      "calls": 180,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 180,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "representative-warm90",
+    "group": "size",
+    "budget": 300,
+    "before": {
+      "calls": 18,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 18,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "large-adaptive",
+    "group": "size",
+    "budget": 300,
+    "before": {
+      "calls": 193,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 193,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "very-large-adaptive",
+    "group": "size",
+    "budget": 300,
+    "before": {
+      "calls": 293,
+      "full": 0,
+      "partial": 0,
+      "checked": 293,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 293,
+      "full": 0,
+      "partial": 0,
+      "checked": 293,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "very-large-dense",
+    "group": "complexity",
+    "budget": 300,
+    "before": {
+      "calls": 300,
+      "full": 0,
+      "partial": 1,
+      "checked": 300,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 300,
+      "full": 0,
+      "partial": 1,
+      "checked": 300,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "very-large-branching",
+    "group": "complexity",
+    "budget": 300,
+    "before": {
+      "calls": 293,
+      "full": 0,
+      "partial": 1,
+      "checked": 293,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43001",
+            "providerCalls": 0,
+            "logicalChecks": 0,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    },
+    "after": {
+      "calls": 293,
+      "full": 0,
+      "partial": 1,
+      "checked": 293,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43001",
+            "providerCalls": 0,
+            "logicalChecks": 0,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "budget-5",
+    "group": "budget",
+    "budget": 5,
+    "before": {
+      "calls": 5,
+      "full": 0,
+      "partial": 0,
+      "checked": 5,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 5,
+      "full": 0,
+      "partial": 0,
+      "checked": 5,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "budget-10",
+    "group": "budget",
+    "budget": 10,
+    "before": {
+      "calls": 10,
+      "full": 0,
+      "partial": 0,
+      "checked": 10,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 10,
+      "full": 0,
+      "partial": 0,
+      "checked": 10,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "budget-20",
+    "group": "budget",
+    "budget": 20,
+    "before": {
+      "calls": 20,
+      "full": 0,
+      "partial": 0,
+      "checked": 20,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 20,
+      "full": 0,
+      "partial": 0,
+      "checked": 20,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "budget-50",
+    "group": "budget",
+    "budget": 50,
+    "before": {
+      "calls": 50,
+      "full": 0,
+      "partial": 0,
+      "checked": 50,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 50,
+      "full": 0,
+      "partial": 0,
+      "checked": 50,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "budget-100",
+    "group": "budget",
+    "budget": 100,
+    "before": {
+      "calls": 100,
+      "full": 0,
+      "partial": 0,
+      "checked": 100,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 100,
+      "full": 0,
+      "partial": 0,
+      "checked": 100,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "budget-300",
+    "group": "budget",
+    "budget": 300,
+    "before": {
+      "calls": 193,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 193,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-0",
+    "group": "cache",
+    "budget": 300,
+    "before": {
+      "calls": 193,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 193,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-25",
+    "group": "cache",
+    "budget": 300,
+    "before": {
+      "calls": 132,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 132,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-50",
+    "group": "cache",
+    "budget": 300,
+    "before": {
+      "calls": 86,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 86,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-75",
+    "group": "cache",
+    "budget": 300,
+    "before": {
+      "calls": 48,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 48,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-90",
+    "group": "cache",
+    "budget": 300,
+    "before": {
+      "calls": 21,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 21,
+      "full": 0,
+      "partial": 0,
+      "checked": 193,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-100",
+    "group": "cache",
+    "budget": 300,
+    "before": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 950,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 950,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-path-0",
+    "group": "cache-path",
+    "budget": 300,
+    "before": {
+      "calls": 49,
+      "full": 1,
+      "partial": 0,
+      "checked": 49,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 21,
+      "full": 1,
+      "partial": 0,
+      "checked": 21,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-path-25",
+    "group": "cache-path",
+    "budget": 300,
+    "before": {
+      "calls": 32,
+      "full": 1,
+      "partial": 0,
+      "checked": 49,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 16,
+      "full": 1,
+      "partial": 0,
+      "checked": 21,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-path-50",
+    "group": "cache-path",
+    "budget": 300,
+    "before": {
+      "calls": 21,
+      "full": 1,
+      "partial": 0,
+      "checked": 49,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 10,
+      "full": 1,
+      "partial": 0,
+      "checked": 21,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-path-75",
+    "group": "cache-path",
+    "budget": 300,
+    "before": {
+      "calls": 9,
+      "full": 1,
+      "partial": 0,
+      "checked": 49,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 5,
+      "full": 1,
+      "partial": 0,
+      "checked": 21,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-path-90",
+    "group": "cache-path",
+    "budget": 300,
+    "before": {
+      "calls": 4,
+      "full": 1,
+      "partial": 0,
+      "checked": 49,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 3,
+      "full": 1,
+      "partial": 0,
+      "checked": 21,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-path-100",
+    "group": "cache-path",
+    "budget": 300,
+    "before": {
+      "calls": 0,
+      "full": 1,
+      "partial": 0,
+      "checked": 49,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 0,
+      "full": 1,
+      "partial": 0,
+      "checked": 21,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-only-hot",
+    "group": "cache",
+    "budget": 300,
+    "before": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-only-redis",
+    "group": "cache",
+    "budget": 300,
+    "before": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-only-persistent",
+    "group": "cache",
+    "budget": 300,
+    "before": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 180,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-logical-global",
+    "group": "limits",
+    "budget": 300,
+    "before": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 25,
+      "stop": "LOGICAL_SAFETY_LIMIT",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 25,
+      "stop": "LOGICAL_SAFETY_LIMIT",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "cache-logical-candidate",
+    "group": "limits",
+    "budget": 300,
+    "before": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 35,
+      "stop": "LOGICAL_SAFETY_LIMIT",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 0,
+      "full": 0,
+      "partial": 0,
+      "checked": 35,
+      "stop": "LOGICAL_SAFETY_LIMIT",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "position-1",
+    "group": "position",
+    "budget": 25,
+    "before": {
+      "calls": 9,
+      "full": 1,
+      "partial": 0,
+      "checked": 9,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 9,
+      "full": 1,
+      "partial": 0,
+      "checked": 9,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "position-10",
+    "group": "position",
+    "budget": 25,
+    "before": {
+      "calls": 25,
+      "full": 0,
+      "partial": 0,
+      "checked": 25,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 9,
+      "full": 1,
+      "partial": 0,
+      "checked": 9,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "position-17",
+    "group": "position",
+    "budget": 25,
+    "before": {
+      "calls": 9,
+      "full": 1,
+      "partial": 0,
+      "checked": 9,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 9,
+      "full": 1,
+      "partial": 0,
+      "checked": 9,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "position-18",
+    "group": "position",
+    "budget": 25,
+    "before": {
+      "calls": 9,
+      "full": 1,
+      "partial": 0,
+      "checked": 9,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 9,
+      "full": 1,
+      "partial": 0,
+      "checked": 9,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "class-SL",
+    "group": "class",
+    "budget": 50,
+    "before": {
+      "calls": 50,
+      "full": 0,
+      "partial": 0,
+      "checked": 50,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 13,
+      "full": 1,
+      "partial": 0,
+      "checked": 13,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "class-2A",
+    "group": "class",
+    "budget": 50,
+    "before": {
+      "calls": 45,
+      "full": 1,
+      "partial": 0,
+      "checked": 45,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 21,
+      "full": 1,
+      "partial": 0,
+      "checked": 21,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "class-2S",
+    "group": "class",
+    "budget": 50,
+    "before": {
+      "calls": 50,
+      "full": 0,
+      "partial": 0,
+      "checked": 50,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 37,
+      "full": 1,
+      "partial": 0,
+      "checked": 37,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "class-mixed",
+    "group": "class",
+    "budget": 150,
+    "before": {
+      "calls": 49,
+      "full": 1,
+      "partial": 0,
+      "checked": 49,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 21,
+      "full": 1,
+      "partial": 0,
+      "checked": 21,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "class-explicit",
+    "group": "class",
+    "budget": 150,
+    "before": {
+      "calls": 45,
+      "full": 0,
+      "partial": 1,
+      "checked": 45,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43001",
+            "providerCalls": 0,
+            "logicalChecks": 0,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    },
+    "after": {
+      "calls": 45,
+      "full": 0,
+      "partial": 1,
+      "checked": 45,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43001",
+            "providerCalls": 0,
+            "logicalChecks": 0,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "class-explicit-multiple",
+    "group": "class",
+    "budget": 150,
+    "before": {
+      "calls": 89,
+      "full": 0,
+      "partial": 1,
+      "checked": 89,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43001",
+            "providerCalls": 0,
+            "logicalChecks": 0,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    },
+    "after": {
+      "calls": 82,
+      "full": 0,
+      "partial": 1,
+      "checked": 82,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43001",
+            "providerCalls": 0,
+            "logicalChecks": 0,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "train-position-0",
+    "group": "train",
+    "budget": 60,
+    "before": {
+      "calls": 60,
+      "full": 0,
+      "partial": 0,
+      "checked": 60,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 60,
+      "full": 1,
+      "partial": 0,
+      "checked": 60,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "train-position-1",
+    "group": "train",
+    "budget": 60,
+    "before": {
+      "calls": 60,
+      "full": 0,
+      "partial": 0,
+      "checked": 60,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 60,
+      "full": 1,
+      "partial": 0,
+      "checked": 60,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "train-position-2",
+    "group": "train",
+    "budget": 60,
+    "before": {
+      "calls": 60,
+      "full": 0,
+      "partial": 0,
+      "checked": 60,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 53,
+      "full": 1,
+      "partial": 0,
+      "checked": 53,
+      "stop": "FAIRNESS_RESERVE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "train-position-0-100",
+    "group": "train",
+    "budget": 100,
+    "before": {
+      "calls": 100,
+      "full": 1,
+      "partial": 0,
+      "checked": 100,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 99,
+      "full": 1,
+      "partial": 0,
+      "checked": 99,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "train-position-1-100",
+    "group": "train",
+    "budget": 100,
+    "before": {
+      "calls": 100,
+      "full": 0,
+      "partial": 0,
+      "checked": 100,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 99,
+      "full": 1,
+      "partial": 0,
+      "checked": 99,
+      "stop": "MARGINAL_VALUE_LOW",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "train-position-2-100",
+    "group": "train",
+    "budget": 100,
+    "before": {
+      "calls": 100,
+      "full": 0,
+      "partial": 0,
+      "checked": 100,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 81,
+      "full": 1,
+      "partial": 0,
+      "checked": 81,
+      "stop": "FAIRNESS_RESERVE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "heterogeneous-30",
+    "group": "train",
+    "budget": 30,
+    "before": {
+      "calls": 28,
+      "full": 1,
+      "partial": 1,
+      "checked": 28,
+      "stop": "FAIRNESS_RESERVE",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 4,
+        "logicalChecks": 4,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43002",
+            "providerCalls": 4,
+            "logicalChecks": 4,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    },
+    "after": {
+      "calls": 28,
+      "full": 1,
+      "partial": 1,
+      "checked": 28,
+      "stop": "FAIRNESS_RESERVE",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 4,
+        "logicalChecks": 4,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43002",
+            "providerCalls": 4,
+            "logicalChecks": 4,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "heterogeneous-60",
+    "group": "train",
+    "budget": 60,
+    "before": {
+      "calls": 56,
+      "full": 1,
+      "partial": 1,
+      "checked": 56,
+      "stop": "FAIRNESS_RESERVE",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 4,
+        "logicalChecks": 4,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43002",
+            "providerCalls": 4,
+            "logicalChecks": 4,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    },
+    "after": {
+      "calls": 55,
+      "full": 1,
+      "partial": 1,
+      "checked": 55,
+      "stop": "FAIRNESS_RESERVE",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 3,
+        "logicalChecks": 3,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43002",
+            "providerCalls": 3,
+            "logicalChecks": 3,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "heterogeneous-100",
+    "group": "train",
+    "budget": 100,
+    "before": {
+      "calls": 86,
+      "full": 1,
+      "partial": 1,
+      "checked": 86,
+      "stop": "FAIRNESS_RESERVE",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 4,
+        "logicalChecks": 4,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43002",
+            "providerCalls": 4,
+            "logicalChecks": 4,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    },
+    "after": {
+      "calls": 84,
+      "full": 1,
+      "partial": 1,
+      "checked": 84,
+      "stop": "FAIRNESS_RESERVE",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 2,
+        "logicalChecks": 2,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43002",
+            "providerCalls": 2,
+            "logicalChecks": 2,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "no-revisit",
+    "group": "revisit",
+    "budget": 80,
+    "before": {
+      "calls": 59,
+      "full": 1,
+      "partial": 0,
+      "checked": 59,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 4,
+        "logicalChecks": 4,
+        "fullRecoveries": 1,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43001",
+            "providerCalls": 4,
+            "logicalChecks": 4,
+            "stopReason": "SUFFICIENT_HIGH_QUALITY_RESULTS"
+          }
+        ]
+      }
+    },
+    "after": {
+      "calls": 52,
+      "full": 1,
+      "partial": 0,
+      "checked": 52,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "no-revisit-counterfactual",
+    "group": "revisit",
+    "budget": 80,
+    "before": {
+      "calls": 64,
+      "full": 1,
+      "partial": 0,
+      "checked": 64,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 52,
+      "full": 1,
+      "partial": 0,
+      "checked": 52,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "bridge-50-cold",
+    "group": "gap",
+    "budget": 50,
+    "before": {
+      "calls": 50,
+      "full": 0,
+      "partial": 1,
+      "checked": 50,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 50,
+      "full": 0,
+      "partial": 1,
+      "checked": 50,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "bridge-50-warm",
+    "group": "gap",
+    "budget": 50,
+    "before": {
+      "calls": 50,
+      "full": 0,
+      "partial": 1,
+      "checked": 51,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 50,
+      "full": 0,
+      "partial": 1,
+      "checked": 51,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "bridge-150-cold",
+    "group": "gap",
+    "budget": 150,
+    "before": {
+      "calls": 93,
+      "full": 1,
+      "partial": 0,
+      "checked": 93,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 93,
+      "full": 1,
+      "partial": 0,
+      "checked": 93,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "bridge-150-warm",
+    "group": "gap",
+    "budget": 150,
+    "before": {
+      "calls": 91,
+      "full": 1,
+      "partial": 0,
+      "checked": 93,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 91,
+      "full": 1,
+      "partial": 0,
+      "checked": 93,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "gap-no-bridge",
+    "group": "gap",
+    "budget": 150,
+    "before": {
+      "calls": 150,
+      "full": 0,
+      "partial": 1,
+      "checked": 150,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 150,
+      "full": 0,
+      "partial": 1,
+      "checked": 150,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "direct-1-AVAILABLE",
+    "group": "direct",
+    "budget": 300,
+    "before": {
+      "calls": 5,
+      "full": 1,
+      "partial": 0,
+      "checked": 5,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 5,
+      "full": 1,
+      "partial": 0,
+      "checked": 5,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "direct-1-RAC",
+    "group": "direct",
+    "budget": 300,
+    "before": {
+      "calls": 5,
+      "full": 1,
+      "partial": 0,
+      "checked": 5,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 5,
+      "full": 1,
+      "partial": 0,
+      "checked": 5,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "direct-5-AVAILABLE",
+    "group": "direct",
+    "budget": 300,
+    "before": {
+      "calls": 25,
+      "full": 5,
+      "partial": 0,
+      "checked": 25,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 25,
+      "full": 5,
+      "partial": 0,
+      "checked": 25,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "direct-5-RAC",
+    "group": "direct",
+    "budget": 300,
+    "before": {
+      "calls": 25,
+      "full": 5,
+      "partial": 0,
+      "checked": 25,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 25,
+      "full": 5,
+      "partial": 0,
+      "checked": 25,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "direct-7-AVAILABLE",
+    "group": "direct",
+    "budget": 300,
+    "before": {
+      "calls": 35,
+      "full": 7,
+      "partial": 0,
+      "checked": 35,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 35,
+      "full": 7,
+      "partial": 0,
+      "checked": 35,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "direct-7-RAC",
+    "group": "direct",
+    "budget": 300,
+    "before": {
+      "calls": 35,
+      "full": 7,
+      "partial": 0,
+      "checked": 35,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 35,
+      "full": 7,
+      "partial": 0,
+      "checked": 35,
+      "stop": "SUFFICIENT_HIGH_QUALITY_RESULTS",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "partials-only",
+    "group": "direct",
+    "budget": 300,
+    "before": {
+      "calls": 300,
+      "full": 0,
+      "partial": 5,
+      "checked": 300,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 300,
+      "full": 0,
+      "partial": 5,
+      "checked": 300,
+      "stop": "PROVIDER_BUDGET_EXHAUSTED",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "deadline-90000",
+    "group": "deadline",
+    "budget": 300,
+    "before": {
+      "calls": 190,
+      "full": 0,
+      "partial": 1,
+      "checked": 190,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 190,
+      "full": 0,
+      "partial": 1,
+      "checked": 190,
+      "stop": "EXACT_MATRIX_COMPLETE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "deadline-1000",
+    "group": "deadline",
+    "budget": 300,
+    "before": {
+      "calls": 54,
+      "full": 0,
+      "partial": 1,
+      "checked": 54,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 1,
+        "logicalChecks": 1,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43001",
+            "providerCalls": 1,
+            "logicalChecks": 1,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    },
+    "after": {
+      "calls": 54,
+      "full": 0,
+      "partial": 1,
+      "checked": 54,
+      "stop": "SCOPE_EXHAUSTED",
+      "revisit": {
+        "candidates": 1,
+        "rounds": 1,
+        "providerCalls": 1,
+        "logicalChecks": 1,
+        "fullRecoveries": 0,
+        "turns": [
+          {
+            "round": 1,
+            "trainNumber": "43001",
+            "providerCalls": 1,
+            "logicalChecks": 1,
+            "stopReason": "SCOPE_EXHAUSTED"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "deadline-30",
+    "group": "deadline",
+    "budget": 300,
+    "before": {
+      "calls": 3,
+      "full": 0,
+      "partial": 1,
+      "checked": 3,
+      "stop": "DEADLINE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 3,
+      "full": 0,
+      "partial": 1,
+      "checked": 3,
+      "stop": "DEADLINE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "failure-rate",
+    "group": "failure",
+    "budget": 300,
+    "before": {
+      "calls": 8,
+      "full": 0,
+      "partial": 1,
+      "checked": 7,
+      "stop": "PROVIDER_RATE_LIMIT",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 8,
+      "full": 0,
+      "partial": 1,
+      "checked": 7,
+      "stop": "PROVIDER_RATE_LIMIT",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "failure-unavailable",
+    "group": "failure",
+    "budget": 300,
+    "before": {
+      "calls": 36,
+      "full": 0,
+      "partial": 1,
+      "checked": 7,
+      "stop": "PROVIDER_UNAVAILABLE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 36,
+      "full": 0,
+      "partial": 1,
+      "checked": 7,
+      "stop": "PROVIDER_UNAVAILABLE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  },
+  {
+    "id": "failure-individual",
+    "group": "failure",
+    "budget": 300,
+    "before": {
+      "calls": 36,
+      "full": 0,
+      "partial": 1,
+      "checked": 35,
+      "stop": "PROVIDER_UNAVAILABLE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    },
+    "after": {
+      "calls": 36,
+      "full": 0,
+      "partial": 1,
+      "checked": 35,
+      "stop": "PROVIDER_UNAVAILABLE",
+      "revisit": {
+        "candidates": 0,
+        "rounds": 0,
+        "providerCalls": 0,
+        "logicalChecks": 0,
+        "fullRecoveries": 0,
+        "turns": []
+      }
+    }
+  }
+]

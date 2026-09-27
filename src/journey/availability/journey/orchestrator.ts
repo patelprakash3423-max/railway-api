@@ -32,6 +32,8 @@ export interface RecoveredJourney {
 export interface JourneyOptions extends ValidationOptions {
   /** Internal historical-evaluation switch. Product AUTO enables bounded revisit. */
   candidateRevisit?:boolean;
+  /** Internal historical-evaluation switch. Product AUTO balances stations/classes. */
+  balancedFairness?:boolean;
   providerCallBudgetLimit?:number;
   /** AUTO is the product policy. Explicit older policies support regression/CLI comparison. */
   directSearch?: 'AUTO' | 'MATRIX' | 'PROGRESSIVE';
@@ -135,7 +137,7 @@ export class JourneyRecoveryOrchestrator {
         const before=session.budget.callsUsed;
         const wholeSpent=classes.filter(c=>session.hasKey(requestKey(wholeRequest(candidate,c)))).length;
         const allowance=Math.min(session.remaining,Math.max(0,deepJourneySearchPolicy.maxChecksPerDirectCandidate-wholeSpent),this.options.maxRecoveryRequestsPerCandidate??Infinity);
-        const recovered=await session.withAllowance(allowance,()=>recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,undefined,{evidenceSearch:{providerAllowance:Math.max(0,remaining-hold),enough:enough||wholeGood(candidate)}}));
+        const recovered=await session.withAllowance(allowance,()=>recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,undefined,{evidenceSearch:{balancedFairness:this.options.balancedFairness,providerAllowance:Math.max(0,remaining-hold),enough:enough||wholeGood(candidate)}}));
         d.recoveryIntervalRequests+=session.budget.callsUsed-before;
         directProgress.set(rank,recovered.diagnostics);evidenceProgress.set(rank,recovered.diagnostics.evidenceSearch!);
         if(recovered.diagnostics.candidateIntervalsGenerated>1){d.candidatesSentToRecovery++;d.legsEligibleForRecovery++;d.legsRecoveryAttempted++;}

@@ -25,8 +25,8 @@ export type Inventory='AVAILABLE'|'RAC'|'WAITLIST'|'NOT_AVAILABLE';
 export type Edge={train:number;a:number;b:number;c:TravelClass};
 export interface Scenario {
  id:string;group:string;nodes:number;routeNodes?:string[];classes?:TravelClass[];sizes?:number[];order?:number[];
- /** Keep Phase 4 measurements frozen by default; Phase 5A fixtures opt in. */
- candidateRevisit?:boolean;budget?:number;logicalLimit?:number;candidateLogicalLimit?:number;requestedClasses?:string[];
+ /** Keep historical measurements frozen by default; later-phase fixtures opt in. */
+ balancedFairness?:boolean;candidateRevisit?:boolean;budget?:number;logicalLimit?:number;candidateLogicalLimit?:number;requestedClasses?:string[];
  warmPercent?:number;warmEdge?:(edge:Edge)=>boolean;cacheLayer?:'hot'|'redis'|'persistent'|'mixed';
  inventory?:(edge:Edge)=>Inventory;deadlineMs?:number;attemptMs?:number;
  failure?:'rate'|'unavailable'|'individual';failureAt?:number;
@@ -115,7 +115,7 @@ export async function evaluateScenario(s:Scenario){
     trace.push({edge:e,request:r,result,calls,time:now});return result;
    }};
   profiler=await profile();const began=performance.now(),heap=process.memoryUsage().heapUsed;
-  const result=await new JourneyRecoveryOrchestrator(db,provider,{candidateRevisit:s.candidateRevisit??false,providerCallBudgetLimit:s.budget??300,budgetLimit:s.logicalLimit,maxRecoveryRequestsPerCandidate:s.candidateLogicalLimit}).validate({source,destination,journeyDate:evaluationDate,requestedClasses:s.requestedClasses??['ALL'],plannerCandidates:candidates,plannerDiagnostics:planned.diagnostics,supportedClassesByTrain:Object.fromEntries(trains.map(t=>[t.number,classes]))});
+  const result=await new JourneyRecoveryOrchestrator(db,provider,{balancedFairness:s.balancedFairness??false,candidateRevisit:s.candidateRevisit??false,providerCallBudgetLimit:s.budget??300,budgetLimit:s.logicalLimit,maxRecoveryRequestsPerCandidate:s.candidateLogicalLimit}).validate({source,destination,journeyDate:evaluationDate,requestedClasses:s.requestedClasses??['ALL'],plannerCandidates:candidates,plannerDiagnostics:planned.diagnostics,supportedClassesByTrain:Object.fromEntries(trains.map(t=>[t.number,classes]))});
   const elapsedMs=performance.now()-began,heapDeltaBytes=process.memoryUsage().heapUsed-heap;
   const structural=await profiler.finish();profiler=undefined;
   // Replay evidence into the SAME bounded production DAG solver after profiling.

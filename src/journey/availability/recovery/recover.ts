@@ -16,7 +16,7 @@ const classRounds:TravelClass[][]=[['SL','3A'],['2A','CC','2S'],['1A','EC','3E']
 export interface DeferredRecoveryWork { requests: AvailabilityRequest[][] }
 /** Recovery never owns a provider or creates a second budget. Pass the SAME
  * AvailabilitySession used for whole-leg validation. Call sequentially per request. */
-export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean;completeMatrix?:boolean;singleClassPaths?:boolean;evidenceSearch?:{providerAllowance:number;enough:boolean}}={}):Promise<RecoveryResult>{
+export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean;completeMatrix?:boolean;singleClassPaths?:boolean;evidenceSearch?:{balancedFairness?:boolean;providerAllowance:number;enough:boolean}}={}):Promise<RecoveryResult>{
   const limits={...defaultRecoveryLimits,...options};
   const allStations=!!(strategy.progressiveStations||strategy.completeMatrix||strategy.evidenceSearch);
   for(const [key,value]of Object.entries(limits))if(!Number.isFinite(value)||(key==='minimumReservedCoverageRatio'?value<=0||value>1:!Number.isSafeInteger(value)||value<1||value>1000))throw new Error(`Invalid recovery limit ${key}`);

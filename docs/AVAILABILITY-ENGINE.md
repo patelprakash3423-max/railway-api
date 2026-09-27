@@ -287,6 +287,24 @@ The Phase 4 partial at 55/80 now reaches FULL at **59/80**, retaining 21 provide
 
 Final validation: **17 new tests passed**; focused Phase 1–5A suite **228 passed, 0 failed**; `npm test` **1,093 passed, 0 failed, 0 skipped**. Both test commands preload the external-network guard. `npm run typecheck`, `npm run build` and `git diff --check` passed; Git emitted only LF/CRLF conversion notices. New files passed trailing-whitespace checks and report links resolved. Installed runtime was Node 22.21.0; target Node 24 was not exercised. No live provider, real Redis, deployment, commit, push or Phase 5B work.
 
+## Phase 5B station/class fairness
+
+Implemented from committed Phase 5A `6f4cc05`. See the [same-fixture comparison](AVAILABILITY-PHASE5B-EVALUATION.md) and [machine-readable results](evaluation/phase5b-results.json). This replaces only the adaptive endpoint-spine order. Whole-leg breadth, exact selection/traversal, gap refinement, bounded candidate revisit, solver/class isolation, cache freshness and global provider admission are unchanged.
+
+The first early, last late and central intermediate stations receive one endpoint pair per eligible class before widening. All classes therefore get an early opportunity across the three regions, rather than depending on a station/pass class rotation. Station ordering preserves the second-tail opportunity next, then bisects remaining route sections breadth-first, rounding symmetrically on either side of the center. Remaining stations rotate through eligible classes in broad passes. Every station/class endpoint pair appears exactly once; no inventory is inferred from priority. Regional ordering uses O(N) storage and linear generated station work; no station-name exceptions or randomness.
+
+The existing pass size, eight-check solver cadence, intermediate refinement opportunities and hard limits remain. Phase 5A still runs only after all direct first passes; its retained graphs and global budget are not reset. `balancedFairness: false` is an internal historical-evaluation switch, not a public API parameter. The Phase 4 harness defaults to historical ordering and its frozen artifacts are retained; Phase 5B comparisons explicitly enable Phase 5A on both sides and vary only fairness.
+
+Identical Phase 4 station fixtures: early/late/second-tail stay FULL at 9 calls; the center changes from missed at 25 calls to FULL at 9. First/middle/last useful class fixtures change from 50 (miss)/45 (FULL)/50 (miss) to 13/21/37 calls, all FULL. Both explicit-class scenarios remain partial without mixed-class leakage. The useful train is now found in all first/middle/last candidate positions at budgets 60 and 100. The original Phase 5A no-revisit case stays FULL and costs 52 calls instead of 59; separate combined regressions prove two-candidate revisit still shares calls 8/8 then 4/4 and cached missing gaps complete with zero additional provider calls.
+
+The reproducible comparison command is `node --import ./src/test-support/local-network-only.mjs --import tsx src/test-support/availability-evaluation/phase5b.ts`. It compares all 69 configured Phase 4 scenarios; the old separate-search retained-evidence continuation is unnecessary because production Phase 5A is enabled on both sides. New tests live in `src/local-railway/tests/station-class-fairness.test.ts`.
+
+Fairness remains bounded sampling, not guaranteed discovery at every station/class under a tiny budget. Three representative stations receive class breadth sooner than other stations; the remaining class rotation and first-pass train reservation can still affect unmeasured inventories. Whole-leg breadth cost is deliberately unchanged. Synthetic fixture totals do not establish production cost/recall, and Node 24/live provider/real Redis remain unverified. No Phase 5C, live calls, commit, push or deployment.
+
+Across all 69 same-fixture comparisons, provider calls fell from **4,614 to 4,379 (5.1%)**; no fixture increased calls or lost a full journey/partial evidence without gaining a full result. These are unweighted synthetic totals. Negative-only N=20/N=30 costs remain 193/293; the constrained gap fixtures retain partial evidence at 50 and sufficient gap fixtures still complete at 93/91 cold/warm calls. Whole-leg breadth costs remain 5/25/35 for one/five/seven direct trains.
+
+Final focused Phase 1–5B suite: **262 passed, 0 failed**, including **34 new fairness/integration tests**. `npm test`: **1,127 passed, 0 failed, 0 skipped**. Typecheck, build and `git diff --check` passed on installed Node 22.21.0; Git emitted only LF/CRLF notices. New-file whitespace and report links also passed. Test commands preload the external-network guard. No live calls, commit, push, deployment or Phase 5C work.
+
 ## Product goal and non-negotiable truth
 
 For FROM + TO + DATE + explicit CLASS/classes or ALL, discover the best evidence-backed journeys:
