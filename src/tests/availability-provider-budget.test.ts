@@ -200,7 +200,9 @@ test('protected RailKit V2 reports only real admitted owners, including warm-sea
  const input={from:'AAA',to:'CCC',date,classes:['SL']};
  const first=await service.search(input);assert.equal(h.calls(),3);assert.equal(first.diagnostics!.providerAvailabilityCalls,3);
  const second=await service.search(input);assert.equal(second.diagnostics!.providerAvailabilityCalls,3);
- assert.equal(second.diagnostics!.sharedCacheHits,3);assert.equal(second.diagnostics!.logicalAvailabilityChecks,7);assert.equal(second.diagnostics!.cacheHits,1);assert.equal(h.calls(),6);
+ // Phase 3 passively rehydrates the preloaded whole-leg edge; that is not a
+ // second session.get or a new provider attempt.
+ assert.equal(second.diagnostics!.sharedCacheHits,3);assert.equal(second.diagnostics!.logicalAvailabilityChecks,6);assert.equal(second.diagnostics!.cacheHits,0);assert.equal(h.calls(),6);
  assert.equal(second.diagnostics!.actualSdkInvocations,3);
 });
 

@@ -31,7 +31,7 @@ function provider(rule:(r:AvailabilityRequest)=>State,cachedEvidence=false){
 }
 for(const gap of ['WAITLIST','NOT_AVAILABLE'] as const)for(const tail of ['AVAILABLE','RAC'] as const)test('matrix retains late portions across '+gap+' with '+tail,async t=>{
  const f=fixture(t),p=provider(r=>r.fromStationCode==='A'&&r.toStationCode==='S12'&&r.travelClass==='SL'?'AVAILABLE':r.fromStationCode==='S21'&&r.toStationCode==='B'&&r.travelClass==='3E'?tail:gap,true);
- const result=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input),j=result.journeys[0];
+ const result=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input),j=result.journeys[0];
  assert.equal(p.calls.length,8*f.codes.length*(f.codes.length-1)/2);
  assert.equal(new Set(p.calls.map(requestKey)).size,p.calls.length);
  assert.ok(p.calls.findIndex(r=>r.fromStationCode==='S21'&&r.toStationCode==='B'&&r.travelClass==='3E')>30);
@@ -47,26 +47,26 @@ for(const gap of ['WAITLIST','NOT_AVAILABLE'] as const)for(const tail of ['AVAIL
 });
 test('matrix returns a full mixed-class same-train path at a late stop',async t=>{
  const f=fixture(t),p=provider(r=>r.fromStationCode==='A'&&r.toStationCode==='S21'&&r.travelClass==='SL'||r.fromStationCode==='S21'&&r.toStationCode==='B'&&r.travelClass==='3E'?'AVAILABLE':'WAITLIST',true);
- const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(j.journeyStatus,'FULLY_RESERVED_WITH_SPLIT_CLASS');assert.equal(j.legs[0].recoveryStatus,'FULL_RESERVED_SPLIT_CLASS');
  assert.equal(j.reservedCoverageRatio,1);assert.equal(j.unknownDistanceKm,0);assert.equal(j.trainChanges,0);assert.equal(j.classChanges,1);
  assert.deepEqual(j.legs[0].segments.map(s=>s.type==='RESERVED'?s.selectedClass:s.type),['SL','3E']);
 });
 test('matrix keeps alternative usable classes to minimize class changes',async t=>{
  const f=fixture(t,2),p=provider(r=>(r.fromStationCode==='A'&&r.toStationCode==='S1'&&['SL','3E'].includes(r.travelClass))||(r.fromStationCode==='S1'&&r.toStationCode==='B'&&r.travelClass==='3E')?'AVAILABLE':'WAITLIST');
- const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(j.reservedCoverageRatio,1);assert.equal(j.classChanges,0);
  assert.ok(j.legs[0].segments.every(s=>s.type==='RESERVED'&&s.selectedClass==='3E'));
 });
 test('explicit classes remain restricted and internal edges form continuous paths',async t=>{
  const f=fixture(t),p=provider(r=>r.travelClass==='SL'&&(r.fromStationCode==='A'&&r.toStationCode==='S12'||r.fromStationCode==='S12'&&r.toStationCode==='S21'||r.fromStationCode==='S21'&&r.toStationCode==='B')?'AVAILABLE':'NOT_AVAILABLE');
- const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p).validate({...f.input,requestedClasses:['SL']});
+ const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate({...f.input,requestedClasses:['SL']});
  assert.ok(p.calls.every(r=>r.travelClass==='SL'));assert.equal(j.reservedCoverageRatio,1);assert.equal(j.classChanges,0);
  assert.equal(j.legs[0].segments.flatMap(s=>s.type==='RESERVED'?s.reservationParts:[]).length,3);
 });
 test('all direct candidates are searched beyond the display target and best five are visible',async t=>{
  const f=fixture(t,2,7),p=provider(r=>r.trainNumber==='41007'||r.toStationCode==='S2'?'AVAILABLE':'WAITLIST');
- const result=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const result=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(new Set(p.calls.map(r=>r.trainNumber)).size,7);
  const shown=presentJourneys(result.journeys.map(serializeJourneyV2));
  assert.equal(shown.results[0].legs[0].trainNumber,'41007');
@@ -75,7 +75,7 @@ test('all direct candidates are searched beyond the display target and best five
 });
 test('matrix safety limit retains partial evidence and marks unchecked distance unknown',async t=>{
  const f=fixture(t),p=provider(r=>r.fromStationCode==='A'&&r.toStationCode==='S1'&&r.travelClass==='SL'?'AVAILABLE':'WAITLIST');
- const {journeys:[j],diagnostics}=await new JourneyRecoveryOrchestrator(f.db,p,{budgetLimit:17}).validate(f.input);
+ const {journeys:[j],diagnostics}=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX',budgetLimit:17}).validate(f.input);
  assert.equal(p.calls.length,17);assert.equal(diagnostics.budgetRemaining,0);assert.equal(j.journeyStatus,'INVENTORY_CHECK_INCOMPLETE');
  assert.equal(j.reservedDistanceKm,100);assert.equal(j.unknownDistanceKm,2200);
  assert.ok(j.legs[0].segments.every(s=>s.type==='RESERVED'));
@@ -83,7 +83,7 @@ test('matrix safety limit retains partial evidence and marks unchecked distance 
 });
 test('per-direct safety bound is enforced independently of the global ceiling',async t=>{
  const f=fixture(t,46),p=provider(()=> 'WAITLIST',true);
- const r=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const r=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(p.calls.length,deepJourneySearchPolicy.maxChecksPerDirectCandidate);
  assert.equal(r.diagnostics.directExploration[0].state,'INCOMPLETE_BUDGET');
  assert.equal(r.diagnostics.directExploration[0].stationsRemaining,0);
@@ -93,12 +93,12 @@ test('per-direct safety bound is enforced independently of the global ceiling',a
 test('product planner preserves every direct service beyond the schedule result cap',async t=>{
  const f=fixture(t,1,32),p=provider(()=> 'AVAILABLE');
  assert.equal(f.input.plannerCandidates.filter(j=>j.changes===0).length,32);
- const r=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const r=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(r.journeys.length,32);assert.equal(p.calls.length,32);
 });
 test('global matrix safety bound is shared across direct candidates',async t=>{
  const f=fixture(t,46,5),p=provider(()=> 'WAITLIST',true);
- const r=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const r=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(p.calls.length,deepJourneySearchPolicy.maxAvailabilityChecks);
  assert.equal(r.diagnostics.budgetRemaining,0);
  assert.ok(r.journeys.every(j=>j.journeyStatus==='INVENTORY_CHECK_INCOMPLETE'));
@@ -109,7 +109,7 @@ test('provider failures stay unknown while later usable edges survive',async t=>
  const p=provider(r=>r.fromStationCode==='S2'&&r.toStationCode==='B'?'AVAILABLE':'WAITLIST');
  const original=p.getAvailability;
  p.getAvailability=async r=>{if(r.fromStationCode==='A'&&r.toStationCode==='S1')throw {status:429};return original(r);};
- const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(j.journeyStatus,'INVENTORY_CHECK_INCOMPLETE');
  assert.equal(j.reservedDistanceKm,100);assert.equal(j.unknownDistanceKm,200);
  assert.ok(j.legs[0].segments.every(s=>s.type==='RESERVED'));
@@ -119,7 +119,7 @@ test('direct matrix checks all intervals before any indirect inventory',async t=
  const original=f.input.plannerCandidates[0],leg=original.segments[0];
  const indirect={...original,changes:1,segments:[{...leg,trainNumber:'51001',to:'S1',toStation:'S1',distanceKm:100},{...leg,trainNumber:'51002',from:'S1',fromStation:'S1',distanceKm:200}],connections:[{station:'S1',minutes:60,safety:'GOOD' as const}]};
  const p=provider(r=>r.trainNumber.startsWith('51')?'AVAILABLE':'WAITLIST');
- const r=await new JourneyRecoveryOrchestrator(f.db,p).validate({...f.input,plannerCandidates:[indirect,original]});
+ const r=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate({...f.input,plannerCandidates:[indirect,original]});
  const firstIndirect=p.calls.findIndex(c=>c.trainNumber.startsWith('51'));
  assert.equal(firstIndirect,8*4*3/2);
  assert.equal(r.diagnostics.directLaneBudgetUsed,48);
@@ -128,7 +128,7 @@ test('direct matrix checks all intervals before any indirect inventory',async t=
 
 for(const state of ['AVAILABLE','RAC'] as const)test('matrix never reserves '+state+' with canBook false',async t=>{
  const f=fixture(t,2),p={getAvailability:async(r:AvailabilityRequest):Promise<AvailabilityResult>=>({request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state,canBook:false}]})};
- const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(j.reservedCoverageRatio,0);assert.ok(j.legs[0].segments.every(s=>s.type!=='RESERVED'));
 });
 test('matrix exact-route unsupported response cannot exclude a later interval class',async t=>{
@@ -137,7 +137,7 @@ test('matrix exact-route unsupported response cannot exclude a later interval cl
   if(r.fromStationCode==='A'&&r.toStationCode==='B')return {request:r,provider:'railkit',providerState:'PROVIDER_ERROR',days:[],providerMessage:'Class does not exist in this train for this Train route'};
   return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state:r.travelClass==='3E'?'AVAILABLE':'WAITLIST'}]};
  }};
- const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const {journeys:[j]}=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(j.reservedCoverageRatio,1);assert.equal(j.classChanges,0);
  assert.ok(j.legs[0].segments.every(s=>s.type==='RESERVED'&&s.selectedClass==='3E'));
 });
@@ -158,7 +158,7 @@ test('protected API exceeds thirty checks without bypassing provider quota',asyn
 });
 test('later direct candidate retains late-route evidence after earlier complete matrices',async t=>{
  const f=fixture(t,22,3),p=provider(r=>r.trainNumber==='41003'&&((r.fromStationCode==='A'&&r.toStationCode==='S12'&&r.travelClass==='SL')||(r.fromStationCode==='S21'&&r.toStationCode==='B'&&r.travelClass==='3E'))?'AVAILABLE':'WAITLIST',true);
- const r=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const r=await new JourneyRecoveryOrchestrator(f.db,p,{directSearch:'MATRIX'}).validate(f.input);
  assert.equal(r.journeys[0].legs[0].trainNumber,'41003');assert.equal(r.journeys[0].reservedDistanceKm,1400);
  assert.ok(r.diagnostics.directExploration.every(x=>x.stationsRemaining===0));
  assert.equal(p.calls.length,3*8*24*23/2);

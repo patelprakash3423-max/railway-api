@@ -1,6 +1,8 @@
 import {AvailabilityProviderBudget} from '../../../providers/availability-provider-budget.js';
 import {hardeningConfig} from '../../../config/hardening.js';
 import { deepJourneySearchPolicy } from './search-policy.js';
+import type {EvidenceSearchDiagnostics,EvidenceStopReason} from '../recovery/evidence-search.js';
+import {requestKey,usable} from '../inventory.js';
 import type { RailwayDatabase } from '../../../local-railway/database.js';
 import { LocalJourneyPlannerV2 } from '../../../local-railway/planner/v2/planner.js';
 import { searchModeConfig } from '../../../application/search-mode.js';
@@ -29,8 +31,8 @@ export interface RecoveredJourney {
 }
 export interface JourneyOptions extends ValidationOptions {
   providerCallBudgetLimit?:number;
-  /** MATRIX is the product default; PROGRESSIVE retains the legacy bounded policy. */
-  directSearch?: 'MATRIX' | 'PROGRESSIVE';
+  /** AUTO is the product policy. Explicit older policies support regression/CLI comparison. */
+  directSearch?: 'AUTO' | 'MATRIX' | 'PROGRESSIVE';
   minimumJourneyReservedCoverageRatio?: number;
   maxRecoveryRequestsPerCandidate?: number;
   recoveryLimits?: Partial<RecoveryLimits>;
@@ -61,8 +63,9 @@ export class JourneyRecoveryOrchestrator {
   constructor(private readonly database: RailwayDatabase, private readonly provider: AvailabilityProvider, private readonly options: JourneyOptions = {}) {}
   async validate(input: ValidationInput) {
     const mode=input.mode??'STANDARD';
-    if(this.options.directSearch!==undefined&&!['MATRIX','PROGRESSIVE'].includes(this.options.directSearch))throw new Error('Invalid direct search policy');
-    const matrix=(this.options.directSearch??'MATRIX')==='MATRIX';
+    if(this.options.directSearch!==undefined&&!['AUTO','MATRIX','PROGRESSIVE'].includes(this.options.directSearch))throw new Error('Invalid direct search policy');
+    const auto=(this.options.directSearch??'AUTO')==='AUTO';
+    const matrix=this.options.directSearch!=='PROGRESSIVE';
     if(!['QUICK','STANDARD','DEEP'].includes(mode))throw new Error('Invalid mode');
     const threshold=this.options.minimumJourneyReservedCoverageRatio??.5;
     const cap=this.options.maxRecoveryRequestsPerCandidate??caps[mode];
@@ -72,11 +75,12 @@ export class JourneyRecoveryOrchestrator {
     if(!Number.isSafeInteger(reserve)||reserve<0||!Number.isFinite(threshold)||threshold<=0||threshold>1||!Number.isSafeInteger(cap)||cap<0||!Number.isSafeInteger(target)||target<1||!batches.length||batches.some(n=>!Number.isSafeInteger(n)||n<1))throw new Error('Invalid journey recovery limits');
     const requestedBudget=this.options.budgetLimit??(matrix?deepJourneySearchPolicy.maxAvailabilityChecks:searchModeConfig(mode).budget!.maxAvailabilityCalls!);
     if(!Number.isSafeInteger(requestedBudget)||requestedBudget<0)throw new Error('Invalid availability budget');
-    const session=new AvailabilitySession(this.provider,matrix?Math.min(requestedBudget,deepJourneySearchPolicy.maxAvailabilityChecks):requestedBudget,new AvailabilityProviderBudget(this.options.providerCallBudgetLimit??hardeningConfig().providerCallBudgetLimit));
+    const session=new AvailabilitySession(this.provider,matrix?Math.min(requestedBudget,deepJourneySearchPolicy.maxAvailabilityChecks):requestedBudget,new AvailabilityProviderBudget(this.options.providerCallBudgetLimit??hardeningConfig().providerCallBudgetLimit),this.provider.currentTimeMs??Date.now);
     const initialReserve=Math.min(reserve,session.limit);
     const d={directCandidates:0,directWholeLegChecks:0,directWholeLegUsable:0,sameTrainRecoveryCandidates:0,sameTrainStationsEligible:0,sameTrainStationsConsidered:0,sameTrainStationsRemaining:0,sameTrainFullRecoveries:0,directLaneBudgetUsed:0,indirectLaneStarted:false,indirectLaneBudgetUsed:0,recoveryReserveInitial:initialReserve,recoveryReserveUsed:0,recoveryReserveReleased:0,releasedReserveCalls:0,candidatesCheckedWholeLeg:0,plannerCandidatesReceived:input.plannerCandidates.length,wholeLegCandidatesValidated:0,wholeLegUsableJourneys:0,candidatesSentToRecovery:0,legsEligibleForRecovery:0,legsRecoveryAttempted:0,legsRecoverySucceeded:0,coverageFeasibilityPruned:0,candidateRecoveryBudgetPruned:0,fullReservedJourneys:0,fullSplitClassJourneys:0,partialRecoveryJourneys:0,scheduledFallbackJourneys:0,inventoryIncompleteJourneys:0,totalReservedDistanceEvaluated:0,totalSelfManagedDistanceReturned:0,wholeLegRequests:0,recoveryIntervalRequests:0,bottleneckLegsEvaluated:0,recoveryEarlyStops:0,candidatesDeferredByBudget:0,candidatesDeferredByTarget:0,truncated:false,breadthCandidatesConsidered:0,breadthCandidatesChecked:0,breadthRequests:0,completionCandidatesConsidered:0,completionCandidatesChecked:0,completionRequests:0,deepWideningCandidates:0,deepWideningRequests:0,candidatesDeferredByAtomicCost:0,candidatesDeferredByBreadthLimit:0};
     const journeys: RecoveredJourney[]=[];
     const directProgress=new Map<number,RecoveryDiagnostics>();
+    const evidenceProgress=new Map<number,EvidenceSearchDiagnostics>();
     const recoveryAttempted=new Set<number>();
     const recoverySpent=new Map<number,number>();
     const recoveryCandidates=new Set<number>(),attemptedLegs=new Set<string>(),successfulLegs=new Set<string>();
@@ -91,6 +95,57 @@ export class JourneyRecoveryOrchestrator {
     for(const lane of [direct,indirect]){
     if(!lane.length)continue;
     const directLane=lane===direct,laneBefore=session.budget.callsUsed,wholeBefore=d.wholeLegRequests;
+    if(directLane&&auto){
+      // Validate request/candidate scope before any provider work. Zero allowance
+      // uses the existing validator without its old sequential allocation policy.
+      const validator=new AvailabilityOrchestrator(this.provider,{...this.options,progressiveAllocation:true,completeFailedCandidates:true});
+      await session.withAllowance(0,()=>validator.validate({...input,plannerCandidates:lane.map(x=>x.candidate)},session));
+      const all=input.requestedClasses.some(c=>c.trim().toUpperCase()==='ALL');
+      const requested=all?[...travelClasses]:input.requestedClasses.map(c=>c.trim().toUpperCase());
+      const classes=(this.options.classRounds??[['SL','3A'],['2A','CC','2S'],['1A','EC','3E']]).flat().filter(c=>requested.includes(c));
+      const allowed=(train:string,c:string)=>input.supportedClassesByTrain?.[train]===undefined||input.supportedClassesByTrain[train].some(x=>x.trim().toUpperCase()===c);
+      const wholeRequest=(candidate:typeof lane[number]['candidate'],travelClass:string)=>{const l=candidate.segments[0];return {trainNumber:l.trainNumber,fromStationCode:l.fromStation,toStationCode:l.toStation,journeyDate:l.boardingDate,travelClass,quota:'GN' as const};};
+      // Class-major whole-leg breadth across ALL direct trains before recovery.
+      // No inferred class support and no per-train provider budget is created.
+      for(const c of classes)for(const {candidate,rank}of lane){
+        session.assertActive();const r=wholeRequest(candidate,c);
+        if(session.remainingTimeMs()<=0||!allowed(r.trainNumber,c)||!session.canAfford([r]))continue;
+        const before=session.budget.callsUsed;await session.get(r);
+        d.wholeLegRequests+=session.budget.callsUsed-before;checked.add(rank);
+      }
+      const validated=await session.withAllowance(0,()=>validator.validate({...input,plannerCandidates:lane.map(x=>x.candidate)},session));
+      const wholes=new Map(validated.journeys.map(whole=>{const index=whole.scheduleRank-1;whole.scheduleRank=lane[index].rank;return [whole.scheduleRank,whole];}));
+      const wholeGood=(candidate:typeof lane[number]['candidate'])=>classes.some(c=>{const hit=session.peekKey(requestKey(wholeRequest(candidate,c)));return hit&&usable(hit);});
+      // Solved trains release their reservation. Each unsolved train leaves at
+      // least half of remaining attempts (or eight per later train) for successors.
+      // Reservations are conservative scheduler estimates; SDK retries still use
+      // the unchanged atomic global admission gate.
+      for(const [index,{candidate,rank}]of lane.entries()){
+        session.assertActive();const whole=wholes.get(rank)!,l=whole.legs[0];
+        if(wholeGood(candidate))wholeUsable.add(rank);
+        if(whole.status!=='INVENTORY_CHECK_INCOMPLETE')fullyChecked.add(rank);
+        const enough=lane.filter(x=>wholeGood(x.candidate)).length+journeys.filter(j=>!wholeUsable.has(j.scheduleRank)&&j.reservedCoverageRatio===1).length>=target;
+        const later=lane.slice(index+1).filter(x=>!wholeGood(x.candidate)).length;
+        const remaining=session.providerBudget.statistics().providerCallBudgetRemaining;
+        const hold=later?Math.min(remaining,Math.max(Math.ceil(remaining/2),later*8)):0;
+        const before=session.budget.callsUsed;
+        const wholeSpent=classes.filter(c=>session.hasKey(requestKey(wholeRequest(candidate,c)))).length;
+        const allowance=Math.min(session.remaining,Math.max(0,deepJourneySearchPolicy.maxChecksPerDirectCandidate-wholeSpent),this.options.maxRecoveryRequestsPerCandidate??Infinity);
+        const recovered=await session.withAllowance(allowance,()=>recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,undefined,{evidenceSearch:{providerAllowance:Math.max(0,remaining-hold),enough:enough||wholeGood(candidate)}}));
+        d.recoveryIntervalRequests+=session.budget.callsUsed-before;
+        directProgress.set(rank,recovered.diagnostics);evidenceProgress.set(rank,recovered.diagnostics.evidenceSearch!);
+        if(recovered.diagnostics.candidateIntervalsGenerated>1){d.candidatesSentToRecovery++;d.legsEligibleForRecovery++;d.legsRecoveryAttempted++;}
+        const best=recovered.best,incomplete=best.reservedCoverageRatio<1&&(!recovered.diagnostics.progressive?.complete||recovered.diagnostics.providerErrors>0);
+        const leg:JourneyLeg={trainNumber:l.trainNumber,scheduledFrom:l.fromStation,scheduledTo:l.toStation,recoveryStatus:incomplete?'INVENTORY_CHECK_INCOMPLETE':best.recoveryStatus,segments:incomplete?best.segments.filter(isReserved):best.segments,legDistanceKm:l.distanceKm,reservedDistanceKm:best.reservedDistanceKm,reservedCoverageRatio:best.reservedCoverageRatio,unknownDistanceKm:incomplete?l.distanceKm-best.reservedDistanceKm:0};
+        if(best.reservedDistanceKm>0&&!wholeUsable.has(rank))d.legsRecoverySucceeded++;
+        if(recovered.diagnostics.evidenceSearch!.stopReason==='PROVIDER_BUDGET_EXHAUSTED'||recovered.diagnostics.evidenceSearch!.stopReason==='LOGICAL_SAFETY_LIMIT')budgetDeferred.add(rank);
+        if(recovered.diagnostics.evidenceSearch!.stopReason==='SUFFICIENT_HIGH_QUALITY_RESULTS'&&best.reservedCoverageRatio<1)targetDeferred.add(rank);
+        d.truncated ||= recovered.diagnostics.truncated;
+        journeys.push(assemble(whole,[leg],threshold));
+      }
+      d.directLaneBudgetUsed=session.budget.callsUsed-laneBefore;d.directWholeLegChecks=d.wholeLegRequests-wholeBefore;
+      continue;
+    }
     if(directLane&&matrix){
       // The display target never stops direct evidence collection.
       for(const {candidate,rank} of lane){
@@ -249,7 +304,7 @@ export class JourneyRecoveryOrchestrator {
                 workByLeg.set(i,deferred);
                 if(firstAttempt){d.legsRecoveryAttempted++;d.bottleneckLegsEvaluated++;}
                 const l=whole.scheduleCandidate.segments[i];
-                const recovered=await recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:laneInput.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,deferred,{progressiveStations:directLane});
+                const recovered=await recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:laneInput.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,deferred,{progressiveStations:directLane,singleClassPaths:auto});
                 if(phase==='EARLY'&&recovered.diagnostics.progressive)recovered.diagnostics.progressive.complete=false;
                 if(directLane)directProgress.set(whole.scheduleRank,recovered.diagnostics);
                 const best=recovered.best;
@@ -324,11 +379,11 @@ export class JourneyRecoveryOrchestrator {
         progress?.progressive?.complete||input.supportedClassesByTrain?.[candidate.segments[0].trainNumber]?.length===0?'EXHAUSTED_SCOPE':progress?.providerErrors||result.wholeLegValidation.legs.some(l=>l.checks.some(c=>c.status==='PROVIDER_ERROR'))?'INCOMPLETE_PROVIDER':
         !matrix&&(targetDeferred.has(rank)||journeys.filter(j=>j.journeyStatus.startsWith('FULLY_RESERVED')).length>=target)?'STOPPED_TARGET':
         progress?.truncationReasons.some(r=>r!=='availabilityBudget')?'INCOMPLETE_LIMIT':'INCOMPLETE_BUDGET';
-      return {scheduleRank:rank,trainNumber:candidate.segments[0].trainNumber,state,intervalsGenerated:progress?.candidateIntervalsGenerated??0,...progress?.progressive};
+      return {scheduleRank:rank,trainNumber:candidate.segments[0].trainNumber,state,intervalsGenerated:progress?.candidateIntervalsGenerated??0,...progress?.progressive,...evidenceProgress.get(rank)};
     });
     d.directWholeLegUsable=directExploration.filter(x=>x.state==='EXACT_DIRECT').length;
     d.sameTrainFullRecoveries=directExploration.filter(x=>x.state==='FULL_SAME_TRAIN').length;
-    d.sameTrainRecoveryCandidates=directProgress.size;
+    d.sameTrainRecoveryCandidates=auto?[...directProgress.values()].filter(p=>p.candidateIntervalsGenerated>1).length:directProgress.size;
     for(const progress of directProgress.values()){
       d.sameTrainStationsEligible+=progress.progressive?.stationsEligible??0;
       d.sameTrainStationsConsidered+=progress.progressive?.stationsConsidered??0;
@@ -342,7 +397,13 @@ export class JourneyRecoveryOrchestrator {
     journeys.sort(rankJourneys);journeys.forEach((j,i)=>{j.finalRank=i+1;d.totalReservedDistanceEvaluated+=j.reservedDistanceKm;d.totalSelfManagedDistanceReturned+=j.selfManagedDistanceKm;const fields={FULLY_RESERVED_USABLE:'fullReservedJourneys',FULLY_RESERVED_WITH_SPLIT_CLASS:'fullSplitClassJourneys',PARTIAL_RESERVED_RECOVERY:'partialRecoveryJourneys',SCHEDULED_BUT_NOT_FULLY_AVAILABLE:'scheduledFallbackJourneys',INVENTORY_CHECK_INCOMPLETE:'inventoryIncompleteJourneys'} as const;d[fields[j.journeyStatus]]++;});
     d.truncated ||= d.candidatesDeferredByBudget>0;
     const evidence=journeys.flatMap(j=>j.wholeLegValidation.legs.filter(l=>l.checks.length));
-    return {journeys,diagnostics:{...d,searchPolicy:matrix?'DIRECT_MATRIX':'PROGRESSIVE',directCandidateCheckLimit:matrix?deepJourneySearchPolicy.maxChecksPerDirectCandidate:cap,directExploration,distinctCandidatesWithAnyWholeLegEvidence:new Set(journeys.filter(j=>j.wholeLegValidation.legs.some(l=>l.checks.length)).map(j=>j.scheduleCandidateId)).size,distinctTrainsChecked:new Set(evidence.map(l=>l.trainNumber)).size,distinctTrainClassPairsChecked:new Set(evidence.flatMap(l=>l.checks.map(c=>`${l.trainNumber}:${c.travelClass}`))).size,...session.statistics()},plannerDiagnostics:input.plannerDiagnostics};
+    const progress=[...evidenceProgress.values()],modes=new Set(progress.map(p=>p.searchMode));
+    const possibleMatrixEdges=progress.reduce((n,p)=>n+p.possibleMatrixEdges,0),checkedMatrixEdges=progress.reduce((n,p)=>n+p.checkedMatrixEdges,0);
+    const stops:EvidenceStopReason[]=['DEADLINE','PROVIDER_RATE_LIMIT','PROVIDER_BUDGET_EXHAUSTED','LOGICAL_SAFETY_LIMIT','PROVIDER_UNAVAILABLE','FAIRNESS_RESERVE','MARGINAL_VALUE_LOW','SUFFICIENT_HIGH_QUALITY_RESULTS','SCOPE_EXHAUSTED','EXACT_MATRIX_COMPLETE'];
+    const statistics=session.statistics();
+    const stopReason=session.providerBudget.stopped?'PROVIDER_BUDGET_EXHAUSTED':statistics.providerRateLimited>0?'PROVIDER_RATE_LIMIT':stops.find(s=>progress.some(p=>p.stopReason===s))??(statistics.providerErrors?'PROVIDER_UNAVAILABLE':'SCOPE_EXHAUSTED');
+    const searchDiagnostics={searchMode:modes.size>1?'MIXED':progress[0]?.searchMode??'NONE',possibleMatrixEdges,checkedMatrixEdges,matrixCoverage:possibleMatrixEdges?100*checkedMatrixEdges/possibleMatrixEdges:0,directTrainsConsidered:direct.length,stationsExplored:progress.reduce((n,p)=>n+p.stationsExplored,0),classesExplored:Object.keys(statistics.classChecksByClass).length,fullPathsFound:progress.reduce((n,p)=>n+p.fullPathsFound,0),partialPathsFound:progress.reduce((n,p)=>n+p.partialPathsFound,0),stopReason};
+    return {journeys,diagnostics:{...d,...searchDiagnostics,searchPolicy:auto?'EVIDENCE_GRAPH':matrix?'DIRECT_MATRIX':'PROGRESSIVE',directCandidateCheckLimit:matrix?deepJourneySearchPolicy.maxChecksPerDirectCandidate:cap,directExploration,distinctCandidatesWithAnyWholeLegEvidence:new Set(journeys.filter(j=>j.wholeLegValidation.legs.some(l=>l.checks.length)).map(j=>j.scheduleCandidateId)).size,distinctTrainsChecked:new Set(evidence.map(l=>l.trainNumber)).size,distinctTrainClassPairsChecked:new Set(evidence.flatMap(l=>l.checks.map(c=>`${l.trainNumber}:${c.travelClass}`))).size,...session.statistics()},plannerDiagnostics:input.plannerDiagnostics};
   }
 }
 export class PlannerV2JourneyRecoveryService {

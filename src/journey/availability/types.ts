@@ -12,6 +12,10 @@ export type AvailabilityProvider = Pick<RailwayProvider, 'getAvailability'> & {
   assertConfigured?: () => void;
   /** Request cancellation/deadline guard; independent of inventory evidence. */
   assertActive?: () => void;
+  /** Remaining search wall-clock allowance, supplied by the protected API. */
+  remainingTimeMs?: () => number;
+  /** Injected request clock shared with freshness checks (defaults to Date.now). */
+  currentTimeMs?: () => number;
   /** Other injected providers retain conservative adapter-invocation accounting. */
   quotaAccounting?: 'SDK_INVOCATION';
   /** Wrapper already admits at its scoped outbound boundary. */

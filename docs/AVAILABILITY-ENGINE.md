@@ -4,9 +4,9 @@ Audit date: 2026-09-23. Scope: the current working tree, including the existing 
 
 ## Read this before changing availability discovery
 
-This is both a record of **current behavior** and the **required target design**. Sections labelled target/proposed are not claims that the feature already exists. **Phase 1 is now implemented:** per-search provider admission/accounting and the configurable maximum of 300. **Phase 2A is now implemented:** a separate SQLite latest-observation store and centralized configurable freshness contract. **Phase 2B is now implemented:** optional Redis distributed evidence caching. Distributed singleflight, background refresh and dynamic EXACT_MATRIX/ADAPTIVE_GRAPH selection remain **not implemented**. The original audit sections below are historical baseline findings where the Phase 1, Phase 2A and Phase 2B updates explicitly supersede them.
+This is both a record of **current behavior** and the **required target design**. Sections labelled target/proposed are not claims that the feature already exists. **Phase 1 is now implemented:** per-search provider admission/accounting and the configurable maximum of 300. **Phase 2A is now implemented:** a separate SQLite latest-observation store and centralized configurable freshness contract. **Phase 2B is now implemented:** optional Redis distributed evidence caching. **Phase 3 is now implemented:** per-candidate EXACT_MATRIX/ADAPTIVE_GRAPH scheduling, whole-leg breadth and bounded gap refinement. Distributed singleflight and background refresh remain **not implemented**. The original audit sections below are historical baseline findings where the Phase 1, Phase 2A, Phase 2B and Phase 3 updates explicitly supersede them.
 
-The target production policy is **at most 300 actual uncached availability provider requests per user search**, shared across all trains and search stages. The executable now independently enforces that provider ceiling. The earlier 32,768-search / 8,192-candidate limits remain as defensive logical-check ceilings, not provider-call allowances; adaptive scheduling has not replaced them.
+The target production policy is **at most 300 actual uncached availability provider requests per user search**, shared across all trains and search stages. The executable now independently enforces that provider ceiling. The earlier 32,768-search / 8,192-candidate limits remain as defensive logical-check ceilings, not provider-call allowances; Phase 3 retains them only as emergency logical-work bounds.
 
 Future sessions must read this document, inspect the current working tree and tests, and preserve working behavior before proposing implementation. Do not remove the old allocator, normalizers, provider scheduler or path solver merely because an architectural replacement is planned. Make one reviewable migration phase at a time. Keep public inventory truth unchanged. No live provider verification, commits, pushes or deployment unless separately authorized.
 
@@ -192,6 +192,66 @@ Focused command (all providers mocked; Redis uses fakes):
 node --import ./src/test-support/local-network-only.mjs --import tsx --test src/tests/availability-redis.test.ts src/tests/availability-redis-client.test.ts src/tests/availability-observation-store.test.ts src/tests/availability-persistence.test.ts src/tests/availability-provider-budget.test.ts src/tests/availability-accounting.test.ts src/tests/availability-scheduler.test.ts src/tests/availability-provenance.test.ts src/tests/unsupported-evidence-cache.test.ts src/tests/provider-evidence.test.ts src/local-railway/tests/availability-v2.test.ts src/local-railway/tests/recovery-v2.test.ts src/local-railway/tests/direct-matrix.test.ts src/local-railway/tests/phase-c-recovery.test.ts src/local-railway/tests/phase-d2-gap.test.ts src/local-railway/tests/journey-recovery-v2.test.ts src/local-railway/tests/journey-v2-api.test.ts
 ```
 
+## Implemented Phase 3: exact matrix and adaptive evidence search
+
+Implemented from clean commit `c3c6d47`, then completed from the interrupted working tree. The product default is now `directSearch: AUTO` / `searchPolicy: EVIDENCE_GRAPH`. Explicit `MATRIX` and `PROGRESSIVE` remain internal compatibility options, not public request modes. QUICK/STANDARD/DEEP and best-five presentation retain their existing meanings. No provider validator, admission gate, cache backend, freshness policy, path solver or ranking algorithm was replaced.
+
+### Audited flow and integration point
+
+LocalJourneyPlannerV2 discovers schedules offline and preserves direct candidates. Authoritative supplied class metadata can narrow the canonical requested classes; production does not fetch class support. One AvailabilitySession and one Phase 1 provider budget cover direct, recovery and indirect work. The new scheduling seam is the direct lane in journey/orchestrator.ts and the evidenceSearch strategy in recovery/recover.ts. Recovery still validates route chronology, physical train run, service calendar, distances and boarding dates before constructing edges. Only normalized AVAILABLE/RAC evidence enters the existing bounded intervalPaths solver. Indirect inventory follows direct exploration using the retained allocator. Assembly, ranking, serialization and initial five presentation are unchanged.
+
+### Cost and selection
+
+`possibleMatrixEdges = C * N * (N - 1) / 2`, with N the full ordered requested route slice and C the eligible selected classes. Missing-distance nodes stay in the denominator, although their unusable splits are skipped, preventing false exhaustive claims.
+
+After whole-leg breadth, EXACT_MATRIX is selected when additional unknown edges fit both the candidate's conservative share of remaining global provider attempts and its remaining logical allowance, and estimated time fits the request deadline. Only fresh session-known positive/negative evidence is discounted; hot/Redis/SQLite entries are never assumed free. The bounded cost scan is skipped for scopes larger than the logical allowance plus whole-leg classes, conservatively discounting nothing. Estimated time is 150 ms per unknown edge, a planning heuristic rather than a latency guarantee. Provider quotas, retries, cancellation and actual latency may interrupt exact work. A solved whole leg or enough full direct results selects adaptive early stopping instead of unnecessary exact work.
+
+All other candidates use ADAPTIVE_GRAPH. Selection is per candidate; aggregate searchMode is EXACT_MATRIX, ADAPTIVE_GRAPH, MIXED or NONE. Exact traversal lazily visits every forward interval/class pair and does not stop merely on its first split path. EXACT_MATRIX_COMPLETE requires valid fresh inventory for the full denominator; provider errors, unsupported responses, missing distances, expiry and interrupted work cannot earn that reason.
+
+### Fairness, adaptive stages and bounded work
+
+1. **Whole-leg breadth:** one class across all direct candidates before the next class, checking every eligible class as resources permit. All basic direct work precedes recovery. More candidates than the available budget cannot be guaranteed checks; unvisited inventory stays unknown.
+2. **Cross-train recovery reservation:** solved trains need no deeper reservation. For R remaining attempts and L later unsolved trains, hold `min(R, max(ceil(R/2), 8*L))`; the current train may schedule against the remainder. A single remaining train can use the remaining budget. These are scheduler estimates, not new admission budgets; retries remain globally charged. Earlier trains are not revisited after yielding, so later unused reservations can remain unused.
+3. **Route-wide spine:** alternate the first and last intermediate station, then move inward. Check A-S and S-B for one class, rotating class assignment across stations and passes. This gives the tail early opportunity without hardcoded station identities or processing all classes at an early station first.
+4. **Early solver:** solve after batches of eight endpoint checks when new usable evidence exists, at pass boundaries, and after endpoint pairs near the final eight provider attempts. Unchanged negative-only batches reuse the previous solution; final solving always rechecks session freshness. Finding a full path in adaptive mode stops candidate recovery. Every requested whole-leg class was considered first, so one available class does not suppress direct alternatives.
+5. **Gap refinement:** after a route-wide pass with reserved evidence, check at most eight new bridge/subinterval edges before the next pass. Direct gap bridges precede alternating inner-node pairs. After spine passes, a deduplicated frontier holds at most 512 edges and consumes at most eight per turn; the existing best partial path supplies gap boundaries. A lazy matrix iterator fills otherwise empty work. Priorities schedule unknown checks only; negative observations never imply neighboring inventory. ALL permits mixed-class paths; explicit selections remain within selected classes and each recovered same-train path uses a single class. Legacy explicit compatibility strategies retain their historical semantics.
+
+The candidate logical ceiling remains 8,192 new session checks including whole-leg work; the search ceiling remains 32,768. Potential edge enumeration is O(C*N^2), lazy and deduplicated. Gap priority regeneration and solving are bounded by these ceilings, eight-edge turns, the 512-entry frontier and the existing 64-state/node path limit; this is not a claim of O(C*N^2) total solver CPU. No Cartesian enumeration of journey paths was introduced. Missing-distance and solver/output truncation remain separately visible.
+
+### Stops, evidence and diagnostics
+
+Adaptive work can stop for SUFFICIENT_HIGH_QUALITY_RESULTS, MARGINAL_VALUE_LOW (two paid batches without reserved-distance gain after route-wide exploration), FAIRNESS_RESERVE, PROVIDER_BUDGET_EXHAUSTED, LOGICAL_SAFETY_LIMIT, DEADLINE, PROVIDER_RATE_LIMIT or PROVIDER_UNAVAILABLE. Exhausting all valid adaptive edges reports SCOPE_EXHAUSTED, not exact mode. The sufficient-result threshold across trains remains five by default (existing usableTarget override); a full adaptive candidate stops its own recovery. Cache-only batches do not trigger the paid marginal-value rule. None of these reasons assigns a status to unchecked inventory. Protected API deadline cancellation still returns the established timeout error, with DEADLINE in failure logs rather than claiming a completed result.
+
+checkedMatrixEdges counts distinct interval/class edges with actual fresh AVAILABLE, RAC, WAITLIST or NOT_AVAILABLE evidence (internally UNAVAILABLE). Generated/queued, unsupported, failed and expired observations are excluded. Passive whole-leg reuse counts once in coverage but does not add a session.get, cache-hit event or provider attempt. matrixCoverage is `100 * checked / possible`; aggregate coverage uses summed numerators and denominators, not an average of candidate percentages. Per-candidate directExploration exposes mode, coverage, stations/classes, path counts and reason. Aggregate stationsExplored sums candidate-local distinct station counts (including endpoints); classesExplored is distinct checked classes for the search. Path counts describe retained solver paths, including partial paths below the standalone display threshold, not all mathematically possible paths. Aggregate stopReason prioritizes resource/provider failures and then candidate stops; per-candidate reasons remain authoritative for individual exploration outcomes. Aggregate mode/coverage/path counts describe direct exploration, not an indirect exact matrix.
+
+New response/completion fields: searchMode, possibleMatrixEdges, checkedMatrixEdges, matrixCoverage, directTrainsConsidered, stationsExplored, classesExplored, fullPathsFound, partialPathsFound and stopReason; opt-in response diagnostics include directExploration. Existing provider/logical/cache metrics remain. Session/hot/Redis/SQLite evidence costs zero provider attempts; a warm adaptive graph can exceed 300 logical checks. After the first denied cold miss, the existing Phase 1 stopped latch prevents further external exploration; already-local evidence remains reusable. A fairness reservation can stop before probing unknown shared-cache entries because their cost is not known safely in advance.
+
+The protected request's injected clock now travels through the API provider wrapper into AvailabilitySession; production defaults to Date.now. This fixes future-clock offline fixtures and keeps session freshness consistent with the injected request clock, without a global clock or changes to observedAt, TTLs, Redis expiration or SQLite truth. Evidence is revalidated during Phase 3 solving; expiry cannot manufacture current reserved coverage.
+
+### Verification scope and remaining limitations
+
+New offline regressions are in src/local-railway/tests/evidence-search.test.ts. Historical exhaustive tests explicitly request MATRIX; their existing truth/count assertions are preserved. The API mixed-class regression now requests ALL as required by the Phase 3 contract. Direct multi-class log expectations reflect whole-leg class breadth. Phase 1's warm-search assertion changes only passive logical/cache counts; real provider, SDK and shared-cache counts remain exact. Phase 2A/2B tests are unchanged.
+
+Reservations and deterministic gap priorities are heuristics, not proof of globally optimal discovery. The first/last alternating order does not guarantee reaching every station under a tiny budget. Exact time estimation does not reserve process quota or predict retries. Clock synchronization across cache instances, actual Redis integration/failover and Node 24 runtime validation remain operational follow-ups. The existing path-state cap can prune alternatives. Distributed singleflight remains deferred; simultaneous cross-instance cold misses can duplicate provider work. No background refresh, prewarming, live provider verification, deployment or next-phase work is included.
+
+Recommended next phase: offline quality/performance evaluation of adaptive scheduling across route sizes, cache distributions, quota/deadline pressure and candidate order, with measured tuning of fairness and stop heuristics. Distributed coordination/account-wide quotas require a separately scoped design before claiming cross-instance stampede protection.
+
+### Phase 3 final validation (2026-09-27)
+
+- Phase 3 focused tests: **25 passed, 0 failed**.
+- Final combined focused suite: **360 passed, 0 failed**. Includes same-train recovery, mixed classes, WAITLIST gaps, API/evidence/normalizer/accounting regressions, all **20 Phase 1** provider-budget tests, **40 Phase 2A** observation/persistence tests and **53 Phase 2B** cache/client tests.
+- Final `npm test`: **1,003 passed, 0 failed, 0 skipped**, after all source/test corrections. All test commands preload `src/test-support/local-network-only.mjs`; providers are mocked and no external Redis is required.
+- `npm run typecheck`, `npm run build`, and `git diff --check`: passed. Git only reports LF/CRLF conversion notices. New files were checked for trailing whitespace too. Validation used installed Node 22.21.0; target Node 24 was not run here.
+- Reviewed every changed source/test against `c3c6d47`, including both new files. Phase 1 admission/transport, Phase 2A model/freshness/store, Phase 2B Redis/scheduler, dependencies and network guard have no diff. No secret values, debug logging, execution-path TODOs or hardcoded production route exceptions were introduced.
+- Fifteen changed/new files: this document; `src/api/services/{journey-v2-model,journey-v2-service,protected-journey-service}.ts`; `src/journey/availability/{session,types}.ts`; `src/journey/availability/journey/{orchestrator,search-policy}.ts`; `src/journey/availability/recovery/{recover,types,evidence-search}.ts`; `src/local-railway/tests/{direct-matrix,journey-v2-api,evidence-search}.test.ts`; `src/tests/availability-provider-budget.test.ts`.
+- Ready for a reviewed Phase 3 commit based on offline validation, subject to the documented heuristic/runtime limitations. No commit, push, deployment, live provider call or next-phase implementation was performed.
+
+Final combined focused command:
+
+```powershell
+node --import ./src/test-support/local-network-only.mjs --import tsx --test src/local-railway/tests/evidence-search.test.ts src/local-railway/tests/recovery-v2.test.ts src/local-railway/tests/journey-recovery-v2.test.ts src/local-railway/tests/phase-c-recovery.test.ts src/local-railway/tests/phase-d2-gap.test.ts src/local-railway/tests/journey-v2-api.test.ts src/tests/normalizers.test.ts src/tests/provider-evidence.test.ts src/tests/availability-provenance.test.ts src/tests/availability-accounting.test.ts src/tests/availability-provider-budget.test.ts src/tests/availability-persistence.test.ts src/tests/availability-observation-store.test.ts src/tests/availability-redis.test.ts src/tests/availability-redis-client.test.ts
+```
+
 ## Product goal and non-negotiable truth
 
 For FROM + TO + DATE + explicit CLASS/classes or ALL, discover the best evidence-backed journeys:
@@ -217,7 +277,7 @@ Discover inventory ordinary point-to-point checks miss. Never fabricate availabi
 - Preserve Phase A error classification, Phase B accounting, Phase C mixed-class/revisit behavior, D1 provenance/identity validation and the D2 gap-subinterval fix, unless a tested replacement is demonstrably stronger.
 - No train, station, name or route-specific scheduling logic. Named real trains/stations in older regression fixtures are examples only.
 
-## Audited runtime architecture
+## Historical audited runtime architecture (pre-Phase 3 scheduling)
 
 ```mermaid
 flowchart TD
@@ -329,7 +389,7 @@ In scheduledAvailability, the callback executed only after scheduler cache/dedup
 
 Process provider quota defaults are **120 invocations per rolling 10 minutes and 10,000 per UTC month**, shared across searches within one process. Search admission defaults are three concurrent searches globally; declared direct-peer clients also have configured per-client restrictions. Counters reset on process restart and are not account-authoritative or multi-instance safe. A 90-second search deadline and 15-second execution timeout remain independent. Quota denial becomes unknown/provider-error evidence; deadline currently returns structured HTTP 504 rather than a partial-success result.
 
-### 32,768 / 8,192 dependency map (current, to migrate later)
+### Historical 32,768 / 8,192 scheduling dependency map (Phase 3 supersedes policy, retains bounds)
 
 | Location | Dependency |
 | --- | --- |
@@ -433,7 +493,7 @@ Background refresh is optional, demand-aware and bounded: prioritize frequent/re
 
 Current dedupe is process-local. Redis hot caching alone does not deduplicate simultaneous misses on separate instances. A later distributed design needs per-key expiring ownership, safe takeover/fencing, result publication or bounded polling, and rechecking storage after ownership acquisition. Locks must not be held indefinitely across a dead worker or outlive transport cancellation. Do not claim exactly one cross-process request without failure-mode tests. Coordinate account-wide quotas separately; process restart must not reset distributed usage.
 
-## Target observability
+## Original target observability (implemented Phase 3 fields described above)
 
 The Phase 1 fields and their implemented semantics are listed above. Remaining names below are target additions/semantics, not a rename of existing aliases without migration:
 
@@ -457,7 +517,7 @@ Stop reasons must include EXACT_MATRIX_COMPLETE, SUFFICIENT_HIGH_QUALITY_RESULTS
 
 Do not turn historical check counters into provider-call counters under the same undocumented names. Version/add fields or document the compatibility transition. Keep identity/provenance detail internal/opt-in unless a deliberately designed public freshness contract needs safe fields. Logs must exclude credentials, raw provider URLs/bodies and identity secrets.
 
-## Gap analysis
+## Historical gap analysis (superseded by implementation updates above)
 
 | Classification | Finding |
 | --- | --- |

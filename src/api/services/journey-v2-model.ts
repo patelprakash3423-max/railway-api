@@ -13,6 +13,9 @@ export interface JourneyV2Result {
 }
 export interface JourneyV2Diagnostics extends Omit<AvailabilityMetrics,'unsupportedEvidenceCacheHits'|'providerUnsupportedResponses'>, ProviderCallDiagnostics {
  searchPolicy?:string;directCandidateCheckLimit?:number;
+ searchMode?:string;possibleMatrixEdges?:number;checkedMatrixEdges?:number;matrixCoverage?:number;
+ directTrainsConsidered?:number;stationsExplored?:number;classesExplored?:number;fullPathsFound?:number;partialPathsFound?:number;stopReason?:string;
+ directExploration?:readonly unknown[];
  /** availabilityCalls, wholeLegCalls, recoveryCalls and budgetUsed count checks, not HTTP requests. */
  plannerCandidates:number;availabilityCalls:number;wholeLegCalls:number;recoveryCalls:number;cacheHits:number;budgetLimit:number;budgetUsed:number;budgetRemaining:number;recoveryReserveInitial:number;recoveryReserveUsed:number;recoveryReserveReleased:number;availableResponses:number;racResponses:number;waitlistResponses:number;unsupportedClassResponses:number;providerErrors:number;discoveryCalls:0;trainInfoCalls:0;truncated:boolean;
 }

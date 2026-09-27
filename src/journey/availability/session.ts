@@ -44,6 +44,7 @@ export class AvailabilitySession {
     try { return await work(); } finally { this.allowanceEnd = previous; }
   }
   assertActive(): void { this.provider.assertActive?.(); }
+  remainingTimeMs():number { return this.provider.remainingTimeMs?.()??Infinity; }
   get logicalRemaining() { return Math.max(0, Math.min(this.limit, this.allowanceEnd) - this.budget.callsUsed); }
   get remaining() { return this.providerBudget.stopped?0:this.logicalRemaining; }
   peekKey(key: string) { const hit=this.cache.get(key);if(hit?.rawDetails?.observation&&(this.now()>=hit.rawDetails.observation.freshUntil||hit.rawDetails.observation.observedAt>this.now())){this.cache.delete(key);return undefined;}return hit; }

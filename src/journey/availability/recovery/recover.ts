@@ -8,6 +8,7 @@ import { AvailabilitySession } from '../session.js';
 import { requestKey,usable } from '../inventory.js';
 import type { InventoryCheck } from '../types.js';
 import { intervalPaths,rankRecovery,type IntervalEdge,type Path } from './paths.js';
+import {searchEvidenceGraph,type EvidenceSearchDiagnostics} from './evidence-search.js';
 import { defaultRecoveryLimits,type RecoveryInput,type RecoveryLimits,type RecoveryDiagnostics,type RecoveryResult,type RecoverySolution,type ReservedSegment } from './types.js';
 const datetime=(minutes:number)=>new Date(minutes*60000).toISOString().slice(0,16)+':00+05:30';
 function wallTime(value:string):number{if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+05:30$/.test(value))throw new Error('Use railway timestamps with +05:30');const m=Date.parse(value)/60000+330;if(!Number.isFinite(m)||datetime(m)!==value)throw new Error('Invalid timestamp');parseDate(formatDate(m));return m;}
@@ -15,9 +16,9 @@ const classRounds:TravelClass[][]=[['SL','3A'],['2A','CC','2S'],['1A','EC','3E']
 export interface DeferredRecoveryWork { requests: AvailabilityRequest[][] }
 /** Recovery never owns a provider or creates a second budget. Pass the SAME
  * AvailabilitySession used for whole-leg validation. Call sequentially per request. */
-export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean;completeMatrix?:boolean}={}):Promise<RecoveryResult>{
+export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean;completeMatrix?:boolean;singleClassPaths?:boolean;evidenceSearch?:{providerAllowance:number;enough:boolean}}={}):Promise<RecoveryResult>{
   const limits={...defaultRecoveryLimits,...options};
-  const allStations=!!(strategy.progressiveStations||strategy.completeMatrix);
+  const allStations=!!(strategy.progressiveStations||strategy.completeMatrix||strategy.evidenceSearch);
   for(const [key,value]of Object.entries(limits))if(!Number.isFinite(value)||(key==='minimumReservedCoverageRatio'?value<=0||value>1:!Number.isSafeInteger(value)||value<1||value>1000))throw new Error(`Invalid recovery limit ${key}`);
   if(input.quota!==undefined&&input.quota!=='GN')throw new Error('Only GN quota supported');
   if(!/^\d{1,5}$/.test(input.trainNumber)||!Number.isFinite(input.distanceKm)||input.distanceKm<=0)throw new Error('Invalid requested train/distance');
@@ -63,7 +64,17 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   const checks:RecoveryResult['checks']=[];
   const request=(v:Interval,c:TravelClass):AvailabilityRequest=>({trainNumber,fromStationCode:nodes[v.a].stationCode,toStationCode:nodes[v.b].stationCode,journeyDate:formatDate(origin+eventMinute(nodes[v.a],false)),travelClass:c,quota:'GN'});
   const edges=():IntervalEdge[]=>[...intervals.values()].flatMap(v=>[...v.checks.values()].filter(usable).map(check=>{const dep=datetime(origin+eventMinute(nodes[v.a],false)),arr=datetime(origin+eventMinute(nodes[v.b],true)),distance=nodes[v.b].distanceKm!-nodes[v.a].distanceKm!,status=check.status as 'AVAILABLE'|'RAC';const segment:ReservedSegment={type:'RESERVED',trainNumber,fromStation:nodes[v.a].stationCode,toStation:nodes[v.b].stationCode,departureDateTime:dep,arrivalDateTime:arr,selectedClass:check.travelClass,quota:'GN',availabilityStatus:status,availabilityText:check.availabilityText,distanceKm:distance,fare:check.fare,reservationParts:[{fromStation:nodes[v.a].stationCode,toStation:nodes[v.b].stationCode,departureDateTime:dep,arrivalDateTime:arr,boardingDate:request(v,check.travelClass).journeyDate,distanceKm:distance,availabilityStatus:status,availabilityText:check.availabilityText,fare:check.fare}]};return{from:v.a,to:v.b,segment};}));
-  const paths=()=>intervalPaths(nodes.map(s=>({code:s.stationCode,distance:s.distanceKm!})),edges(),limits.maxStatesPerNode,n=>{d.statesPruned+=n;truncate('pathStates');});
+  const paths=()=>{
+    // The new scheduler revalidates freshness before solving; expired edges
+    // cannot establish a current path or inflate matrix coverage.
+    if(strategy.evidenceSearch)for(const v of intervals.values())for(const c of v.checks.keys()){
+      const current=session.peekKey(requestKey(request(v,c)));if(current)v.checks.set(c,current);else v.checks.delete(c);
+    }
+    const available=edges(),solve=(items:IntervalEdge[])=>intervalPaths(nodes.map(s=>({code:s.stationCode,distance:s.distanceKm!})),items,limits.maxStatesPerNode,n=>{d.statesPruned+=n;truncate('pathStates');});
+    // Explicit multi-class selection may compare classes, but only ALL may
+    // combine different classes into one same-train reservation path.
+    return (strategy.evidenceSearch||strategy.singleClassPaths)&&!raw.includes('ALL')&&requested.length>1?requested.flatMap(c=>solve(available.filter(e=>e.segment.selectedClass===c))):solve(available);
+  };
   const fullFound=()=>paths().some(p=>p.segments.length>0&&p.segments.every(s=>s.type==='RESERVED'));
   // Observe existing exclusions only; interval eligibility/order is unchanged.
   const knownUnsupported=(c:TravelClass)=>{
@@ -90,7 +101,31 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   };
   const rounds=classRounds.map(r=>r.filter(c=>requested.includes(c))).filter(r=>r.length);
   const stages:[string,Interval[][]][]=[['FULL',[[full]]],['ANCHORED',anchored],['SPLIT_POINTS',splits],['BROADER',broader]];
-  if(strategy.completeMatrix){
+  let evidenceSearch:EvidenceSearchDiagnostics|undefined;
+  if(strategy.evidenceSearch){
+    evidenceSearch=await searchEvidenceGraph({nodes:nodes.length,scopeNodes:stops.length,classes:rounds.flat(),...strategy.evidenceSearch,logicalAllowance:session.remaining,
+      providerUsed:()=>session.providerBudget.statistics().providerAvailabilityCalls,providerRemaining:()=>session.providerBudget.statistics().providerCallBudgetRemaining,
+      remainingTime:()=>session.remainingTimeMs(),active:()=>session.assertActive(),
+      known:e=>session.peekKey(requestKey(request({a:e.a,b:e.b,checks:new Map()},e.c))),
+      check:async e=>{
+        const v=add(e.a,e.b)!,r=request(v,e.c);
+        if(!session.canAfford([r]))return undefined;
+        const check=session.peekKey(requestKey(r))??await session.get(r);v.checks.set(e.c,check);checks.push({fromStation:r.fromStationCode,toStation:r.toStationCode,boardingDate:r.journeyDate,check});
+        if(check.status==='AVAILABLE')d.intervalsAvailable++;else if(check.status==='RAC')d.intervalsRac++;else if(check.status==='WAITLIST')d.intervalsWaitlist++;else if(check.status==='PROVIDER_ERROR')d.providerErrors++;
+        return check;
+      },
+      solve:()=>{
+        const found=paths().map(p=>({p,full:p.segments.length>0&&p.segments.every(s=>s.type==='RESERVED')})).sort((a,b)=>b.p.reserved-a.p.reserved||a.p.changes-b.p.changes);
+        return {full:found.filter(x=>x.full).length,partial:found.filter(x=>!x.full&&x.p.reserved>0).length,reserved:found[0]?.p.reserved??0,
+          gaps:found[0]?.p.segments.filter(s=>s.type==='SELF_MANAGED').map(s=>({a:nodes.findIndex(n=>n.stationCode===s.fromStation),b:nodes.findIndex(n=>n.stationCode===s.toStation)}))??[]};
+      }});
+    if(d.missingDistanceStopsSkipped&&evidenceSearch.stopReason==='EXACT_MATRIX_COMPLETE')evidenceSearch.stopReason='LOGICAL_SAFETY_LIMIT';
+    if(evidenceSearch.checkedMatrixEdges<evidenceSearch.possibleMatrixEdges)truncate('unexploredEvidence');
+    if(evidenceSearch.stopReason==='LOGICAL_SAFETY_LIMIT'||evidenceSearch.stopReason==='PROVIDER_BUDGET_EXHAUSTED')truncate('availabilityBudget');
+    d.candidateIntervalsGenerated=intervals.size;
+    const considered=new Set(checks.flatMap(x=>[x.fromStation,x.toStation]).filter(c=>c!==first.stationCode&&c!==last.stationCode));
+    d.progressive={stationsEligible:selected.length,stationsConsidered:considered.size,stationsRemaining:selected.length-considered.size,stationRoundsAttempted:Math.ceil(checks.length/8),complete:evidenceSearch.checkedMatrixEdges===evidenceSearch.possibleMatrixEdges&&!d.missingDistanceStopsSkipped};
+  }else if(strategy.completeMatrix){
     const considered=new Set<number>();let stopped=false;
     // Every forward pair is eligible. Endpoint intervals precede quadratic
     // internal expansion so late stops get evidence early. Admit one class
@@ -182,5 +217,5 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   const ranked=paths().map(toSolution).sort(rankRecovery),eligible=ranked.filter(p=>['FULL_RESERVED_SINGLE_CLASS','FULL_RESERVED_SPLIT_CLASS','PARTIAL_RESERVED_RECOVERY'].includes(p.recoveryStatus));
   d.fullCoverageSolutions=eligible.filter(p=>p.recoveryStatus==='FULL_RESERVED_SINGLE_CLASS'||p.recoveryStatus==='FULL_RESERVED_SPLIT_CLASS').length;d.partialCoverageSolutions=eligible.length-d.fullCoverageSolutions;
   if(eligible.length>limits.maxResults)truncate('results');const best=ranked[0];d.bestReservedCoverageRatio=best.reservedCoverageRatio;d.bestClassChanges=best.classChanges;d.selfManagedDistanceKm=best.selfManagedDistanceKm;
-  return{best,solutions:eligible.slice(0,limits.maxResults),diagnostics:d,checks};
+  return{best,solutions:eligible.slice(0,limits.maxResults),diagnostics:{...d,...(evidenceSearch?{evidenceSearch}:{})},checks};
 }

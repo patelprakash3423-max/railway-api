@@ -36,7 +36,7 @@ export function guardedProvider(provider:AvailabilityProvider,signal:AbortSignal
   finally{clearTimeout(timer);}
  }};
 }
-/** Production boundary; planner/allocation/recovery retain their exact rules. */
+/** Production admission, deadline and shared request clock for V2 search. */
 export class ProtectedJourneyService {
  private protection:SearchProtection;
  constructor(private readonly database:RailwayDatabase,private readonly provider:AvailabilityProvider,private readonly config:HardeningConfig,private readonly options:{diagnostics?:boolean;logger?:(r:Record<string,unknown>)=>void}={},private readonly now:()=>number=Date.now){this.protection=new SearchProtection(config,now,provider instanceof RailKitProvider?provider.availabilityScheduler.quota:undefined);}
@@ -75,6 +75,8 @@ export class ProtectedJourneyService {
   const timer=setTimeout(()=>deadline.abort(new PublicError('SEARCH_TIMEOUT','Journey search timed out. Please try again.',504)),this.config.searchTimeoutMs);
   const checkTime=()=>{if(this.now()>=end)deadline.abort(new PublicError('SEARCH_TIMEOUT','Journey search timed out. Please try again.',504));signal.throwIfAborted();};
   const provider=guardedProvider(this.provider,signal,this.config.providerTimeoutMs,()=>{if(this.provider.quotaAccounting!=='SDK_INVOCATION'){checkTime();lease.consume();}});
+  provider.remainingTimeMs=()=>Math.max(0,end-this.now());
+  provider.currentTimeMs=this.now;
   try{
    const result=await abortable(signal,()=>new JourneyV2ApiService(this.database,provider,serviceOptions).search(search,requestId));
    checkTime();return result;
