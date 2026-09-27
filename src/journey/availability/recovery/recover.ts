@@ -8,7 +8,7 @@ import { AvailabilitySession } from '../session.js';
 import { requestKey,usable } from '../inventory.js';
 import type { InventoryCheck } from '../types.js';
 import { intervalPaths,rankRecovery,type IntervalEdge,type Path } from './paths.js';
-import {searchEvidenceGraph,type EvidenceSearchDiagnostics} from './evidence-search.js';
+import {searchEvidenceGraph,type EvidenceSearchDiagnostics,type EvidenceRevisit} from './evidence-search.js';
 import { defaultRecoveryLimits,type RecoveryInput,type RecoveryLimits,type RecoveryDiagnostics,type RecoveryResult,type RecoverySolution,type ReservedSegment } from './types.js';
 const datetime=(minutes:number)=>new Date(minutes*60000).toISOString().slice(0,16)+':00+05:30';
 function wallTime(value:string):number{if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+05:30$/.test(value))throw new Error('Use railway timestamps with +05:30');const m=Date.parse(value)/60000+330;if(!Number.isFinite(m)||datetime(m)!==value)throw new Error('Invalid timestamp');parseDate(formatDate(m));return m;}
@@ -102,8 +102,19 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   const rounds=classRounds.map(r=>r.filter(c=>requested.includes(c))).filter(r=>r.length);
   const stages:[string,Interval[][]][]=[['FULL',[[full]]],['ANCHORED',anchored],['SPLIT_POINTS',splits],['BROADER',broader]];
   let evidenceSearch:EvidenceSearchDiagnostics|undefined;
+  let evidenceResume:EvidenceRevisit|undefined;
+  const refreshEvidence=()=>{
+    if(!evidenceSearch)return;
+    if(d.missingDistanceStopsSkipped&&evidenceSearch.stopReason==='EXACT_MATRIX_COMPLETE')evidenceSearch.stopReason='LOGICAL_SAFETY_LIMIT';
+    if(evidenceSearch.checkedMatrixEdges<evidenceSearch.possibleMatrixEdges)truncate('unexploredEvidence');
+    if(evidenceSearch.stopReason==='LOGICAL_SAFETY_LIMIT'||evidenceSearch.stopReason==='PROVIDER_BUDGET_EXHAUSTED')truncate('availabilityBudget');
+    d.candidateIntervalsGenerated=intervals.size;
+    const considered=new Set(checks.flatMap(x=>[x.fromStation,x.toStation]).filter(c=>c!==first.stationCode&&c!==last.stationCode));
+    d.progressive={stationsEligible:selected.length,stationsConsidered:considered.size,stationsRemaining:selected.length-considered.size,stationRoundsAttempted:Math.ceil(checks.length/8),complete:evidenceSearch.checkedMatrixEdges===evidenceSearch.possibleMatrixEdges&&!d.missingDistanceStopsSkipped};
+  };
   if(strategy.evidenceSearch){
     evidenceSearch=await searchEvidenceGraph({nodes:nodes.length,scopeNodes:stops.length,classes:rounds.flat(),...strategy.evidenceSearch,logicalAllowance:session.remaining,
+      defer:resume=>{evidenceResume=resume;},
       providerUsed:()=>session.providerBudget.statistics().providerAvailabilityCalls,providerRemaining:()=>session.providerBudget.statistics().providerCallBudgetRemaining,
       remainingTime:()=>session.remainingTimeMs(),active:()=>session.assertActive(),
       known:e=>session.peekKey(requestKey(request({a:e.a,b:e.b,checks:new Map()},e.c))),
@@ -119,12 +130,7 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
         return {full:found.filter(x=>x.full).length,partial:found.filter(x=>!x.full&&x.p.reserved>0).length,reserved:found[0]?.p.reserved??0,
           gaps:found[0]?.p.segments.filter(s=>s.type==='SELF_MANAGED').map(s=>({a:nodes.findIndex(n=>n.stationCode===s.fromStation),b:nodes.findIndex(n=>n.stationCode===s.toStation)}))??[]};
       }});
-    if(d.missingDistanceStopsSkipped&&evidenceSearch.stopReason==='EXACT_MATRIX_COMPLETE')evidenceSearch.stopReason='LOGICAL_SAFETY_LIMIT';
-    if(evidenceSearch.checkedMatrixEdges<evidenceSearch.possibleMatrixEdges)truncate('unexploredEvidence');
-    if(evidenceSearch.stopReason==='LOGICAL_SAFETY_LIMIT'||evidenceSearch.stopReason==='PROVIDER_BUDGET_EXHAUSTED')truncate('availabilityBudget');
-    d.candidateIntervalsGenerated=intervals.size;
-    const considered=new Set(checks.flatMap(x=>[x.fromStation,x.toStation]).filter(c=>c!==first.stationCode&&c!==last.stationCode));
-    d.progressive={stationsEligible:selected.length,stationsConsidered:considered.size,stationsRemaining:selected.length-considered.size,stationRoundsAttempted:Math.ceil(checks.length/8),complete:evidenceSearch.checkedMatrixEdges===evidenceSearch.possibleMatrixEdges&&!d.missingDistanceStopsSkipped};
+    refreshEvidence();
   }else if(strategy.completeMatrix){
     const considered=new Set<number>();let stopped=false;
     // Every forward pair is eligible. Endpoint intervals precede quadratic
@@ -209,6 +215,7 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
       classes.filter(c=>!v.checks.has(c)&&!knownUnsupported(c)).map(c=>request(v,c))
     )).filter(requests=>requests.length>0);
   const after=session.statistics();d.availabilityRequestsUsed=after.availabilityRequestsUsed-before.availabilityRequestsUsed;d.availabilityCacheHits=after.availabilityCacheHits-before.availabilityCacheHits;d.budgetRemaining=session.remaining;
+  const materialize=():RecoveryResult=>{
   const toSolution=(p:Path):RecoverySolution=>{
     const ratio=p.reserved/input.distanceKm,full=p.segments.length>0&&p.segments.every(s=>s.type==='RESERVED'),reserved=p.segments.filter((s):s is ReservedSegment=>s.type==='RESERVED');
     const status=full?(p.changes?'FULL_RESERVED_SPLIT_CLASS':'FULL_RESERVED_SINGLE_CLASS'):p.reserved+1e-9>=limits.minimumReservedCoverageRatio*input.distanceKm&&reserved.length?'PARTIAL_RESERVED_RECOVERY':d.truncated||d.providerErrors?'INVENTORY_CHECK_INCOMPLETE':'NO_USABLE_RECOVERY';
@@ -217,5 +224,13 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   const ranked=paths().map(toSolution).sort(rankRecovery),eligible=ranked.filter(p=>['FULL_RESERVED_SINGLE_CLASS','FULL_RESERVED_SPLIT_CLASS','PARTIAL_RESERVED_RECOVERY'].includes(p.recoveryStatus));
   d.fullCoverageSolutions=eligible.filter(p=>p.recoveryStatus==='FULL_RESERVED_SINGLE_CLASS'||p.recoveryStatus==='FULL_RESERVED_SPLIT_CLASS').length;d.partialCoverageSolutions=eligible.length-d.fullCoverageSolutions;
   if(eligible.length>limits.maxResults)truncate('results');const best=ranked[0];d.bestReservedCoverageRatio=best.reservedCoverageRatio;d.bestClassChanges=best.classChanges;d.selfManagedDistanceKm=best.selfManagedDistanceKm;
-  return{best,solutions:eligible.slice(0,limits.maxResults),diagnostics:{...d,...(evidenceSearch?{evidenceSearch}:{})},checks};
+  return{best,solutions:eligible.slice(0,limits.maxResults),diagnostics:{...d,...(evidenceSearch?{evidenceSearch}:{})},checks,
+    ...(evidenceResume?{revisit:async(providerAllowance:number,logicalAllowance:number)=>{
+      const previous=session.statistics();
+      evidenceSearch=await evidenceResume!(providerAllowance,logicalAllowance);
+      const current=session.statistics();d.availabilityRequestsUsed+=current.availabilityRequestsUsed-previous.availabilityRequestsUsed;d.availabilityCacheHits+=current.availabilityCacheHits-previous.availabilityCacheHits;d.budgetRemaining=session.remaining;
+      refreshEvidence();return materialize();
+    }}:{})};
+  };
+  return materialize();
 }

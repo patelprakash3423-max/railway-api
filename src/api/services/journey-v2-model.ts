@@ -1,4 +1,5 @@
 import type {ProviderCallDiagnostics} from '../../providers/availability-provider-budget.js';
+import type {CandidateRevisitDiagnostics} from '../../journey/availability/recovery/evidence-search.js';
 import type {AvailabilityMetrics} from '../../providers/availability-observation.js';
 import type {JourneyPresentation,PresentationMetadata} from '../../journey/presentation/types.js';
 export type JourneyV2Status = 'FULLY_RESERVED_USABLE'|'FULLY_RESERVED_WITH_SPLIT_CLASS'|'PARTIAL_RESERVED_RECOVERY'|'SCHEDULED_BUT_NOT_FULLY_AVAILABLE'|'INVENTORY_CHECK_INCOMPLETE';
@@ -15,6 +16,7 @@ export interface JourneyV2Diagnostics extends Omit<AvailabilityMetrics,'unsuppor
  searchPolicy?:string;directCandidateCheckLimit?:number;
  searchMode?:string;possibleMatrixEdges?:number;checkedMatrixEdges?:number;matrixCoverage?:number;
  directTrainsConsidered?:number;stationsExplored?:number;classesExplored?:number;fullPathsFound?:number;partialPathsFound?:number;stopReason?:string;
+ candidateRevisit?:CandidateRevisitDiagnostics;
  directExploration?:readonly unknown[];
  /** availabilityCalls, wholeLegCalls, recoveryCalls and budgetUsed count checks, not HTTP requests. */
  plannerCandidates:number;availabilityCalls:number;wholeLegCalls:number;recoveryCalls:number;cacheHits:number;budgetLimit:number;budgetUsed:number;budgetRemaining:number;recoveryReserveInitial:number;recoveryReserveUsed:number;recoveryReserveReleased:number;availableResponses:number;racResponses:number;waitlistResponses:number;unsupportedClassResponses:number;providerErrors:number;discoveryCalls:0;trainInfoCalls:0;truncated:boolean;

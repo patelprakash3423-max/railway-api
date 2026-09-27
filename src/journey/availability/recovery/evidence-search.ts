@@ -9,12 +9,19 @@ export interface EvidenceSearchDiagnostics {
 }
 export const evidenceSearchPolicy=Object.freeze({batchSize:8,frontierSize:512,estimatedAttemptMs:150});
 export interface EvidenceEdge {a:number;b:number;c:TravelClass}
+export type EvidenceRevisit=(providerAllowance:number,logicalAllowance:number)=>Promise<EvidenceSearchDiagnostics>;
+export const candidateRevisitPolicy=Object.freeze({checksPerTurn:8,maxRounds:4,noGainRounds:2});
+export interface CandidateRevisitDiagnostics {
+ candidates:number;rounds:number;providerCalls:number;logicalChecks:number;fullRecoveries:number;
+ turns:{round:number;trainNumber:string;providerCalls:number;logicalChecks:number;stopReason:EvidenceStopReason}[];
+}
 export interface EvidenceSearchContext {
  nodes:number;scopeNodes?:number;classes:TravelClass[];providerAllowance:number;logicalAllowance:number;enough:boolean;
  providerUsed:()=>number;providerRemaining:()=>number;remainingTime:()=>number;active:()=>void;
  known:(edge:EvidenceEdge)=>InventoryCheck|undefined;
  check:(edge:EvidenceEdge)=>Promise<InventoryCheck|undefined>;
  solve:()=>{full:number;partial:number;reserved:number;gaps:{a:number;b:number}[]};
+ defer?:(resume:EvidenceRevisit)=>void;
 }
 export const matrixCost=(nodes:number,classes:number)=>classes*nodes*(nodes-1)/2;
 const truth=(check:InventoryCheck|undefined)=>!!check&&['AVAILABLE','RAC','WAITLIST','UNAVAILABLE'].includes(check.status);
@@ -26,7 +33,7 @@ export function* routeWideNodes(first:number,last:number):Generator<number>{
 export async function searchEvidenceGraph(ctx:EvidenceSearchContext):Promise<EvidenceSearchDiagnostics>{
  const possibleMatrixEdges=matrixCost(ctx.scopeNodes??ctx.nodes,ctx.classes.length),last=ctx.nodes-1;
  const visited=new Map<string,EvidenceEdge>(),valid=new Set<string>(),stations=new Set<number>(),classes=new Set<string>();
- const started=ctx.providerUsed();let freshChecks=0,reason:EvidenceStopReason|undefined,providerFailure=false;
+ let started=ctx.providerUsed(),freshChecks=0,reason:EvidenceStopReason|undefined,providerFailure=false;
  // Only session-known fresh evidence is discounted. No speculative Redis/SQLite probes.
  let knownCount=0;
  if(possibleMatrixEdges<=ctx.logicalAllowance+ctx.classes.length){
@@ -135,6 +142,7 @@ export async function searchEvidenceGraph(ctx:EvidenceSearchContext):Promise<Evi
    if(frontier.size>count)exhausted=false;
   }
  }
+ const snapshot=()=>{
  quality=ctx.solve();
  // Revalidate session freshness before claiming coverage at completion.
  for(const [k,e]of visited)if(!truth(ctx.known(e)))valid.delete(k);
@@ -142,4 +150,37 @@ export async function searchEvidenceGraph(ctx:EvidenceSearchContext):Promise<Evi
  if(reason==='SUFFICIENT_HIGH_QUALITY_RESULTS'&&!ctx.enough&&!quality.full)reason='MARGINAL_VALUE_LOW';
  reason??=providerFailure?'PROVIDER_UNAVAILABLE':complete?(searchMode==='EXACT_MATRIX'?'EXACT_MATRIX_COMPLETE':'SCOPE_EXHAUSTED'):'MARGINAL_VALUE_LOW';
  return {searchMode,possibleMatrixEdges,checkedMatrixEdges:valid.size,matrixCoverage:possibleMatrixEdges?100*valid.size/possibleMatrixEdges:100,stationsExplored:stations.size,classesExplored:classes.size,fullPathsFound:quality.full,partialPathsFound:quality.partial,stopReason:reason};
+ };
+ const result=snapshot();
+ if(!quality.full&&quality.reserved>0&&['FAIRNESS_RESERVE','MARGINAL_VALUE_LOW'].includes(result.stopReason))ctx.defer?.(async(providerAllowance,logicalAllowance)=>{
+  // Retain the original graph and visited identities. This is gap reinvestment,
+  // never a new matrix/spine traversal or a new provider admission budget.
+  ctx.providerAllowance=providerAllowance;ctx.logicalAllowance=logicalAllowance;
+  started=ctx.providerUsed();freshChecks=0;reason=undefined;quality=ctx.solve();
+  if(quality.full){reason='SUFFICIENT_HIGH_QUALITY_RESULTS';return snapshot();}
+  if(!quality.reserved){reason='SCOPE_EXHAUSTED';return snapshot();}
+  function* gaps():Generator<EvidenceEdge>{
+   for(const gap of quality.gaps){
+    for(const c of ctx.classes)yield {...gap,c};
+    let index=0;
+    for(const k of routeWideNodes(gap.a+1,gap.b-1)){
+     for(let pass=0;pass<ctx.classes.length;pass++){
+      const c=ctx.classes[(index+pass)%ctx.classes.length];yield {a:gap.a,b:k,c};yield {a:k,b:gap.b,c};
+     }
+     index++;
+    }
+   }
+  }
+  let checked=0;
+  for(const edge of gaps()){
+   if(visited.has(key(edge)))continue;
+   if(!await observe(edge))break;
+   checked++;quality=ctx.solve();
+   if(quality.full){reason='SUFFICIENT_HIGH_QUALITY_RESULTS';break;}
+   if(checked>=candidateRevisitPolicy.checksPerTurn){reason='FAIRNESS_RESERVE';break;}
+  }
+  reason??=providerFailure?'PROVIDER_UNAVAILABLE':'SCOPE_EXHAUSTED';
+  return snapshot();
+ });
+ return result;
 }

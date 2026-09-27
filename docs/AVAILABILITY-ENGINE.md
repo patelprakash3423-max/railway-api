@@ -277,6 +277,16 @@ node --import ./src/test-support/local-network-only.mjs --import tsx --test src/
 
 Recommendation: review the Phase 4 decisions, then separately scope bounded residual-budget revisits and fairness experiments as Phase 5 offline work. A small separately authorized single-instance live diagnostic run has no demonstrated budget/inventory-truth blocker, but these synthetic results do not establish integration readiness or broad production search quality. Do not automatically start tuning or live validation.
 
+## Phase 5A bounded candidate revisit
+
+Implemented from committed Phase 4 `eeb0484`; see [Phase 5A evaluation](AVAILABILITY-PHASE5A-EVALUATION.md). This supersedes the earlier no-revisit limitation for promising candidates. After the unchanged direct first pass, AUTO rotates unresolved evidence-backed candidates through small gap-refinement turns using their retained recovery graph and the same session/global budget. No matrix restart, new provider budget, station/class fairness tuning or whole-leg breadth change.
+
+Policy: at most eight new checks per turn, provider share capped at eight and divided among remaining candidates in that round, four rounds maximum, and two no-gain turns per candidate. Greater reserved coverage/smaller gaps have priority. FULL, exact-complete, exhausted and resource/provider-failed candidates do not re-enter. The existing solver preserves freshness, explicit-class isolation and UNKNOWN/negative truth. `candidateRevisit` diagnostics report candidates, rounds, provider/logical cost, full recoveries and turn records. An internal evaluation switch preserves the original Phase 4 baseline; product AUTO enables revisit by default.
+
+The Phase 4 partial at 55/80 now reaches FULL at **59/80**, retaining 21 provider attempts. A cached missing-gap variant reaches FULL with **zero additional provider calls**. Two wide-gap candidates share 24 remaining attempts in turns of 8/8 then 4/4. Tests are in `src/local-railway/tests/candidate-revisit.test.ts`; no Phase 1 admission or Phase 2 cache implementation changed.
+
+Final validation: **17 new tests passed**; focused Phase 1–5A suite **228 passed, 0 failed**; `npm test` **1,093 passed, 0 failed, 0 skipped**. Both test commands preload the external-network guard. `npm run typecheck`, `npm run build` and `git diff --check` passed; Git emitted only LF/CRLF conversion notices. New files passed trailing-whitespace checks and report links resolved. Installed runtime was Node 22.21.0; target Node 24 was not exercised. No live provider, real Redis, deployment, commit, push or Phase 5B work.
+
 ## Product goal and non-negotiable truth
 
 For FROM + TO + DATE + explicit CLASS/classes or ALL, discover the best evidence-backed journeys:
