@@ -98,7 +98,8 @@ test('adaptive cache-only search can check more than 300 logical edges',async t=
 });
 test('enough direct full results stop deep exploration and preserve initial five',async t=>{
  const f=fixture(t,20,6),p=provider(()=> 'AVAILABLE'),r=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
- assert.equal(p.attempts.length,30);assert.equal(r.diagnostics.stopReason,'SUFFICIENT_HIGH_QUALITY_RESULTS');
+ // Phase 5C retains SL/3A/2A and defers lower-preference whole-leg classes.
+ assert.equal(p.attempts.length,18);assert.equal(r.diagnostics.stopReason,'SUFFICIENT_HIGH_QUALITY_RESULTS');
  assert.equal(r.journeys.filter(j=>j.reservedCoverageRatio===1).length,6);assert.ok(r.diagnostics.matrixCoverage<100);
 });
 test('deadline pressure selects adaptive; expired deadline is distinct from budget exhaustion',async t=>{

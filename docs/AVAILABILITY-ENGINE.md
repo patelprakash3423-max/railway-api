@@ -305,6 +305,14 @@ Across all 69 same-fixture comparisons, provider calls fell from **4,614 to 4,37
 
 Final focused Phase 1–5B suite: **262 passed, 0 failed**, including **34 new fairness/integration tests**. `npm test`: **1,127 passed, 0 failed, 0 skipped**. Typecheck, build and `git diff --check` passed on installed Node 22.21.0; Git emitted only LF/CRLF notices. New-file whitespace and report links also passed. Test commands preload the external-network guard. No live calls, commit, push, deployment or Phase 5C work.
 
+## Phase 5C sufficient direct results
+
+AUTO now defers lower-preference whole-leg classes under ALL after fresh AVAILABLE whole-leg evidence exists for five distinct trains (or the larger internal target). It preserves every train's first opportunity, higher-preference class checks, explicit selections, RAC upgrades and observed fare comparison. Recovery consumes the retained evidence without refilling deferred variants. Faster/tied unresolved schedules retain first-pass recovery; schedules strictly worse than the fifth strong result on duration/distance can stop deep exploration. Skipped inventory remains unknown, and sufficient stopping never claims exact matrix completion.
+
+See [Phase 5C evaluation](AVAILABILITY-PHASE5C-EVALUATION.md) and its reproducible harness comparison. Original five/seven-train AVAILABLE fixtures fall from 25/35 to 15/21 provider calls with identical ranked results and selected 2A class. Fifth strong evidence still arrives at call 5; post-fifth calls fall from 20/30 to 10/16. RAC-only costs stay unchanged because RAC is not the strong threshold. The historical harness defaults `sufficientDirectResults` to false; product AUTO enables it. No provider/cache/evidence semantics, admission ceiling, ranking, Phase 5A revisit bounds or Phase 5B station/class order changed. Unknown fares in unqueried classes and bounded discovery remain limitations, detailed in the report.
+
+Final offline validation: **33 Phase 5C tests**, **262 Phase 1–5B regressions**, and **1,160 full-suite tests** passed with zero failures. All **69** same-fixture comparisons retain identical ranked result summaries. Typecheck, build and whitespace checks passed on Node 22.21.0. No live validation, commit, push or deployment.
+
 ## Product goal and non-negotiable truth
 
 For FROM + TO + DATE + explicit CLASS/classes or ALL, discover the best evidence-backed journeys:

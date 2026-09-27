@@ -3,6 +3,7 @@ import {hardeningConfig} from '../../../config/hardening.js';
 import { deepJourneySearchPolicy } from './search-policy.js';
 import {candidateRevisitPolicy,type CandidateRevisitDiagnostics,type EvidenceSearchDiagnostics,type EvidenceStopReason} from '../recovery/evidence-search.js';
 import {requestKey,usable} from '../inventory.js';
+import {recoveryClassPreference} from '../recovery/paths.js';
 import type { RailwayDatabase } from '../../../local-railway/database.js';
 import { LocalJourneyPlannerV2 } from '../../../local-railway/planner/v2/planner.js';
 import { searchModeConfig } from '../../../application/search-mode.js';
@@ -34,6 +35,8 @@ export interface JourneyOptions extends ValidationOptions {
   candidateRevisit?:boolean;
   /** Internal historical-evaluation switch. Product AUTO balances stations/classes. */
   balancedFairness?:boolean;
+  /** Internal historical-evaluation switch. AUTO stops redundant whole-leg widening. */
+  sufficientDirectResults?:boolean;
   providerCallBudgetLimit?:number;
   /** AUTO is the product policy. Explicit older policies support regression/CLI comparison. */
   directSearch?: 'AUTO' | 'MATRIX' | 'PROGRESSIVE';
@@ -110,12 +113,32 @@ export class JourneyRecoveryOrchestrator {
       const classes=(this.options.classRounds??[['SL','3A'],['2A','CC','2S'],['1A','EC','3E']]).flat().filter(c=>requested.includes(c));
       const allowed=(train:string,c:string)=>input.supportedClassesByTrain?.[train]===undefined||input.supportedClassesByTrain[train].some(x=>x.trim().toUpperCase()===c);
       const wholeRequest=(candidate:typeof lane[number]['candidate'],travelClass:string)=>{const l=candidate.segments[0];return {trainNumber:l.trainNumber,fromStationCode:l.fromStation,toStationCode:l.toStation,journeyDate:l.boardingDate,travelClass,quota:'GN' as const};};
+      const strongWhole=(candidate:typeof lane[number]['candidate'])=>classes.some(c=>session.peekKey(requestKey(wholeRequest(candidate,c)))?.status==='AVAILABLE');
+      const redundantClass=(candidate:typeof lane[number]['candidate'],travelClass:string)=>!classes.some(c=>session.peekKey(requestKey(wholeRequest(candidate,c)))?.fare)&&classes.some(c=>{
+        const hit=session.peekKey(requestKey(wholeRequest(candidate,c)));
+        return hit?.status==='AVAILABLE'&&!hit.fare&&recoveryClassPreference(c)<recoveryClassPreference(travelClass);
+      });
+      const sufficientWhole=()=>new Set(lane.filter(x=>strongWhole(x.candidate)).map(x=>x.candidate.segments[0].trainNumber)).size>=Math.max(5,target);
+      // AVAILABLE, whole-leg, zero-change evidence is already maximal on the
+      // ranking dimensions preceding duration/distance. Only strictly slower/
+      // longer schedules can be dominated; ties retain recovery opportunities.
+      const competitiveSchedule=(candidate:typeof lane[number]['candidate'])=>{
+        const distinct=new Map(lane.filter(x=>strongWhole(x.candidate)).map(x=>[x.candidate.segments[0].trainNumber,x.candidate]));
+        const fifth=[...distinct.values()].sort((a,b)=>a.durationMinutes-b.durationMinutes||a.segments[0].distanceKm-b.segments[0].distanceKm)[Math.max(5,target)-1];
+        return !fifth||candidate.durationMinutes<fifth.durationMinutes||candidate.durationMinutes===fifth.durationMinutes&&candidate.segments[0].distanceKm<=fifth.segments[0].distanceKm;
+      };
+      const initialOpportunity=new Set<number>();
       // Class-major whole-leg breadth across ALL direct trains before recovery.
       // No inferred class support and no per-train provider budget is created.
       for(const c of classes)for(const {candidate,rank}of lane){
         session.assertActive();const r=wholeRequest(candidate,c);
         if(session.remainingTimeMs()<=0||!allowed(r.trainNumber,c)||!session.canAfford([r]))continue;
+        // Only ALL's lower-preference variants on already strong trains are deferred.
+        // Every eligible train keeps its first opportunity; RAC/unknown trains
+        // keep all classes. Recheck fresh session evidence at every decision.
+        if(this.options.sufficientDirectResults!==false&&all&&initialOpportunity.has(rank)&&sufficientWhole()&&redundantClass(candidate,c))continue;
         const before=session.budget.callsUsed;await session.get(r);
+        initialOpportunity.add(rank);
         d.wholeLegRequests+=session.budget.callsUsed-before;checked.add(rank);
       }
       const validated=await session.withAllowance(0,()=>validator.validate({...input,plannerCandidates:lane.map(x=>x.candidate)},session));
@@ -130,14 +153,16 @@ export class JourneyRecoveryOrchestrator {
         session.assertActive();const whole=wholes.get(rank)!,l=whole.legs[0];
         if(wholeGood(candidate))wholeUsable.add(rank);
         if(whole.status!=='INVENTORY_CHECK_INCOMPLETE')fullyChecked.add(rank);
-        const enough=lane.filter(x=>wholeGood(x.candidate)).length+journeys.filter(j=>!wholeUsable.has(j.scheduleRank)&&j.reservedCoverageRatio===1).length>=target;
+        const enough=this.options.sufficientDirectResults!==false&&all&&sufficientWhole()
+          ?!competitiveSchedule(candidate)
+          :lane.filter(x=>wholeGood(x.candidate)).length+journeys.filter(j=>!wholeUsable.has(j.scheduleRank)&&j.reservedCoverageRatio===1).length>=target;
         const later=lane.slice(index+1).filter(x=>!wholeGood(x.candidate)).length;
         const remaining=session.providerBudget.statistics().providerCallBudgetRemaining;
         const hold=later?Math.min(remaining,Math.max(Math.ceil(remaining/2),later*8)):0;
         const before=session.budget.callsUsed;
         const wholeSpent=classes.filter(c=>session.hasKey(requestKey(wholeRequest(candidate,c)))).length;
         const allowance=Math.min(session.remaining,Math.max(0,deepJourneySearchPolicy.maxChecksPerDirectCandidate-wholeSpent),this.options.maxRecoveryRequestsPerCandidate??Infinity);
-        const recovered=await session.withAllowance(allowance,()=>recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,undefined,{evidenceSearch:{balancedFairness:this.options.balancedFairness,providerAllowance:Math.max(0,remaining-hold),enough:enough||wholeGood(candidate)}}));
+        const recovered=await session.withAllowance(allowance,()=>recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,undefined,{evidenceSearch:{deferWholeLegWidening:this.options.sufficientDirectResults!==false&&all&&sufficientWhole()&&strongWhole(candidate),balancedFairness:this.options.balancedFairness,providerAllowance:Math.max(0,remaining-hold),enough:enough||wholeGood(candidate)}}));
         d.recoveryIntervalRequests+=session.budget.callsUsed-before;
         directProgress.set(rank,recovered.diagnostics);evidenceProgress.set(rank,recovered.diagnostics.evidenceSearch!);
         if(recovered.diagnostics.candidateIntervalsGenerated>1){d.candidatesSentToRecovery++;d.legsEligibleForRecovery++;d.legsRecoveryAttempted++;}

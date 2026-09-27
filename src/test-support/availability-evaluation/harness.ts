@@ -26,9 +26,11 @@ export type Edge={train:number;a:number;b:number;c:TravelClass};
 export interface Scenario {
  id:string;group:string;nodes:number;routeNodes?:string[];classes?:TravelClass[];sizes?:number[];order?:number[];
  /** Keep historical measurements frozen by default; later-phase fixtures opt in. */
- balancedFairness?:boolean;candidateRevisit?:boolean;budget?:number;logicalLimit?:number;candidateLogicalLimit?:number;requestedClasses?:string[];
+ sufficientDirectResults?:boolean;balancedFairness?:boolean;candidateRevisit?:boolean;budget?:number;logicalLimit?:number;candidateLogicalLimit?:number;requestedClasses?:string[];
  warmPercent?:number;warmEdge?:(edge:Edge)=>boolean;cacheLayer?:'hot'|'redis'|'persistent'|'mixed';
  inventory?:(edge:Edge)=>Inventory;deadlineMs?:number;attemptMs?:number;
+ fare?:(edge:Edge)=>number|undefined;
+ minutesPerStop?:number[];
  failure?:'rate'|'unavailable'|'individual';failureAt?:number;
 }
 type Trace={edge:Edge;request:AvailabilityRequest;result:AvailabilityResult;calls:number;time:number};
@@ -79,18 +81,19 @@ export async function evaluateScenario(s:Scenario){
  let profiler:Awaited<ReturnType<typeof profile>>|undefined;
  try{
   const trains:LocalDataset['trains']=sizes.map((_,i)=>({number:String(43001+i),name:`Evaluation ${i}`,sourceCode:source,destinationCode:destination,runningDaysRaw:'Daily',runningDays:['MON','TUE','WED','THU','FRI','SAT','SUN']}));
-  const stops=trains.flatMap((train,i)=>routes[i].map((stationCode,j)=>{const index=codes.indexOf(stationCode),minutes=360+index*20,time=String(Math.floor(minutes/60)%24).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0');return {trainNumber:train.number,stationCode,sequence:j+1,dayOffset:Math.floor(minutes/1440),arrivalTime:j?time:undefined,departureTime:j<routes[i].length-1?time:undefined,distanceKm:index*100};}));
+  const stops=trains.flatMap((train,i)=>routes[i].map((stationCode,j)=>{const index=codes.indexOf(stationCode),minutes=360+index*(s.minutesPerStop?.[i]??20),time=String(Math.floor(minutes/60)%24).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0');return {trainNumber:train.number,stationCode,sequence:j+1,dayOffset:Math.floor(minutes/1440),arrivalTime:j?time:undefined,departureTime:j<routes[i].length-1?time:undefined,distanceKm:index*100};}));
   db.replace({stations:codes.map(code=>({code,name:code})),trains,stops,metadata:{source:'RAILPULL_NTES',importedAt:'2099-09-01T00:00:00Z',trainCount:trains.length,stationCount:codes.length,stopCount:stops.length}});
   const planned=new LocalJourneyPlannerV2(db,{},true).search({from:source,to:destination,date:evaluationDate});
   const candidates=order.map(i=>{const candidate=planned.journeys.find(j=>j.segments.length===1&&j.segments[0].trainNumber===trains[i].number);if(!candidate)throw Error('Fixture train absent from actual V2 planner');return candidate;});
   const request=(e:Edge):AvailabilityRequest=>({trainNumber:trains[e.train].number,fromStationCode:codes[e.a],toStationCode:codes[e.b],journeyDate:evaluationDate,travelClass:e.c,quota:'GN'});
   const inventory=(e:Edge)=>s.inventory?.(e)??'WAITLIST';
+  const response=(e:Edge,r:AvailabilityRequest)=>{const raw=envelope(r,inventory(e)),fare=s.fare?.(e);return fare===undefined?raw:{...raw,data:{...raw.data,fare:{totalFare:fare}}};};
   const scope:Edge[]=routes.flatMap((route,train)=>route.flatMap((from,a)=>route.slice(a+1).flatMap(to=>classes.map(c=>({train,a:codes.indexOf(from),b:codes.indexOf(to),c})))));
   const sorted=[...scope].sort((a,b)=>hash(edgeKey(a))-hash(edgeKey(b))||edgeKey(a).localeCompare(edgeKey(b)));
   const warm=new Set(sorted.slice(0,Math.round(scope.length*(s.warmPercent??0)/100)).map(edgeKey));
   for(const e of scope)if(s.warmEdge?.(e))warm.add(edgeKey(e));
   const seeds={hot:0,redis:0,persistent:0};let index=0;
-  for(const e of scope){if(!warm.has(edgeKey(e)))continue;const r=request(e),raw=envelope(r,inventory(e)),o=makeObservation(normalizeAvailability(raw,r),now);
+  for(const e of scope){if(!warm.has(edgeKey(e)))continue;const r=request(e),raw=response(e,r),o=makeObservation(normalizeAvailability(raw,r),now);
    const tier=s.cacheLayer&&s.cacheLayer!=='mixed'?s.cacheLayer:(['hot','redis','persistent'] as const)[index++%3];seeds[tier]++;
    if(tier==='hot')await scheduler.execute(r,async()=>raw);
    else if(tier==='redis')await redis.remember(o,policy,clock);
@@ -108,14 +111,14 @@ export async function evaluateScenario(s:Scenario){
        // Normal provider failure envelopes exercise the real failure normalizer/cache exclusion.
        return {success:false,error:s.failure==='rate'?'Rate limit exceeded':'Service unavailable',status:s.failure==='rate'?429:503};
       }
-      return envelope(r,inventory(e));
+      return response(e,r);
      }));
      result=normalizeAvailability(raw,r);const observation=observationMetadata(raw);if(observation)result={...result,observation};
     }catch(error){result=availabilityFailure(r,error);}
     trace.push({edge:e,request:r,result,calls,time:now});return result;
    }};
   profiler=await profile();const began=performance.now(),heap=process.memoryUsage().heapUsed;
-  const result=await new JourneyRecoveryOrchestrator(db,provider,{balancedFairness:s.balancedFairness??false,candidateRevisit:s.candidateRevisit??false,providerCallBudgetLimit:s.budget??300,budgetLimit:s.logicalLimit,maxRecoveryRequestsPerCandidate:s.candidateLogicalLimit}).validate({source,destination,journeyDate:evaluationDate,requestedClasses:s.requestedClasses??['ALL'],plannerCandidates:candidates,plannerDiagnostics:planned.diagnostics,supportedClassesByTrain:Object.fromEntries(trains.map(t=>[t.number,classes]))});
+  const result=await new JourneyRecoveryOrchestrator(db,provider,{sufficientDirectResults:s.sufficientDirectResults??false,balancedFairness:s.balancedFairness??false,candidateRevisit:s.candidateRevisit??false,providerCallBudgetLimit:s.budget??300,budgetLimit:s.logicalLimit,maxRecoveryRequestsPerCandidate:s.candidateLogicalLimit}).validate({source,destination,journeyDate:evaluationDate,requestedClasses:s.requestedClasses??['ALL'],plannerCandidates:candidates,plannerDiagnostics:planned.diagnostics,supportedClassesByTrain:Object.fromEntries(trains.map(t=>[t.number,classes]))});
   const elapsedMs=performance.now()-began,heapDeltaBytes=process.memoryUsage().heapUsed-heap;
   const structural=await profiler.finish();profiler=undefined;
   // Replay evidence into the SAME bounded production DAG solver after profiling.

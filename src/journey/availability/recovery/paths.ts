@@ -2,6 +2,7 @@ import type { RecoverySegment, RecoverySolution, ReservedSegment } from './types
 export interface IntervalEdge { from:number; to:number; segment:ReservedSegment }
 export interface Path { segments:RecoverySegment[]; reserved:number; racDistance:number; changes:number; lastClass:string; fragments:number; knownFare:number; missingFares:number }
 const comfort=['1A','EC','2A','3A','3E','CC','SL','2S'];
+export const recoveryClassPreference=(travelClass:string)=>comfort.indexOf(travelClass);
 const comfortCost=(segments:RecoverySegment[])=>segments.reduce((n,s)=>n+(s.type==='RESERVED'?comfort.indexOf(s.selectedClass):0),0);
 const identity=(p:Path)=>JSON.stringify(p.segments.map(s=>[s.type,s.fromStation,s.toStation,s.type==='RESERVED'?s.selectedClass:'']));
 export function rankPath(a:Path,b:Path):number {return b.reserved-a.reserved||Number(a.segments.some(s=>s.type==='SELF_MANAGED'))-Number(b.segments.some(s=>s.type==='SELF_MANAGED'))||a.racDistance-b.racDistance||a.changes-b.changes||a.fragments-b.fragments||a.missingFares-b.missingFares||a.knownFare-b.knownFare||comfortCost(a.segments)-comfortCost(b.segments)||identity(a).localeCompare(identity(b));}

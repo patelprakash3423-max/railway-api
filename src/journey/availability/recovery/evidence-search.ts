@@ -1,5 +1,6 @@
 import type {TravelClass} from '../../types/journey-segment.js';
 import type {InventoryCheck} from '../types.js';
+import {recoveryClassPreference} from './paths.js';
 
 export type EvidenceSearchMode='EXACT_MATRIX'|'ADAPTIVE_GRAPH';
 export type EvidenceStopReason='EXACT_MATRIX_COMPLETE'|'SUFFICIENT_HIGH_QUALITY_RESULTS'|'MARGINAL_VALUE_LOW'|'PROVIDER_BUDGET_EXHAUSTED'|'LOGICAL_SAFETY_LIMIT'|'DEADLINE'|'PROVIDER_RATE_LIMIT'|'PROVIDER_UNAVAILABLE'|'FAIRNESS_RESERVE'|'SCOPE_EXHAUSTED';
@@ -16,6 +17,7 @@ export interface CandidateRevisitDiagnostics {
  turns:{round:number;trainNumber:string;providerCalls:number;logicalChecks:number;stopReason:EvidenceStopReason}[];
 }
 export interface EvidenceSearchContext {
+ deferWholeLegWidening?:boolean;
  balancedFairness?:boolean;
  nodes:number;scopeNodes?:number;classes:TravelClass[];providerAllowance:number;logicalAllowance:number;enough:boolean;
  providerUsed:()=>number;providerRemaining:()=>number;remainingTime:()=>number;active:()=>void;
@@ -93,7 +95,13 @@ export async function searchEvidenceGraph(ctx:EvidenceSearchContext):Promise<Evi
   return true;
  };
  // Whole-leg evidence is always first, including when the parent preloaded it.
- for(const c of ctx.classes)if(!await observe({a:0,b:last,c}))break;
+ for(const c of ctx.classes){
+  if(ctx.deferWholeLegWidening&&!ctx.known({a:0,b:last,c})&&!ctx.classes.some(knownClass=>ctx.known({a:0,b:last,c:knownClass})?.fare)&&ctx.classes.some(knownClass=>{
+   const hit=ctx.known({a:0,b:last,c:knownClass});
+   return hit?.status==='AVAILABLE'&&!hit.fare&&recoveryClassPreference(knownClass)<recoveryClassPreference(c);
+  }))continue;
+  if(!await observe({a:0,b:last,c}))break;
+ }
  quality=ctx.solve();
  solvedVersion=usableVersion;
  if(!reason&&searchMode==='ADAPTIVE_GRAPH'&&(ctx.enough||quality.full))reason='SUFFICIENT_HIGH_QUALITY_RESULTS';
