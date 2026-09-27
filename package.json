@@ -2,6 +2,7 @@
   "name": "railway-api",
   "version": "1.0.0",
   "scripts": {
+    "evaluate:availability": "node --import ./src/test-support/local-network-only.mjs --import tsx src/test-support/availability-evaluation/run.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import ./src/test-support/local-network-only.mjs --import tsx --test src/tests/*.test.ts src/local-railway/tests/*.test.ts scripts/*.test.mjs",
     "dev:api": "node --watch --import tsx src/api/main.ts",

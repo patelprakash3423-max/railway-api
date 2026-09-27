@@ -252,6 +252,31 @@ Final combined focused command:
 node --import ./src/test-support/local-network-only.mjs --import tsx --test src/local-railway/tests/evidence-search.test.ts src/local-railway/tests/recovery-v2.test.ts src/local-railway/tests/journey-recovery-v2.test.ts src/local-railway/tests/phase-c-recovery.test.ts src/local-railway/tests/phase-d2-gap.test.ts src/local-railway/tests/journey-v2-api.test.ts src/tests/normalizers.test.ts src/tests/provider-evidence.test.ts src/tests/availability-provenance.test.ts src/tests/availability-accounting.test.ts src/tests/availability-provider-budget.test.ts src/tests/availability-persistence.test.ts src/tests/availability-observation-store.test.ts src/tests/availability-redis.test.ts src/tests/availability-redis-client.test.ts
 ```
 
+## Phase 4 offline evaluation handoff
+
+Started from a verified clean tree at `bd1f8c0` (committed Phase 3). The reusable [deterministic evaluation report](AVAILABILITY-PHASE4-EVALUATION.md) and [raw measurements](evaluation/phase4-results.json) cover **70 scenarios** using actual V2 planning, scheduling, admission, normalization, caches and path solving. Fake inventory, time and Redis transport keep every scenario offline. No production heuristics, provider accounting, cache semantics, ranking or public API fields changed.
+
+Run `npm run evaluate:availability` to regenerate both artifacts. Fixtures and evaluation-only profiling/milestone replay are in `src/test-support/availability-evaluation/`; regressions are in `src/local-railway/tests/availability-evaluation.test.ts`. The script and every validation command preload `src/test-support/local-network-only.mjs`. Timings/heap deltas are informational; tests assert evidence, cap, coverage and structural bounds rather than elapsed-time thresholds.
+
+Main findings: 20/180-edge exact matrices complete; a 90%-warm 180-edge matrix costs 18 calls; all 950 fresh cached edges cost zero provider calls. Cold 950/2,175-edge scopes stop adaptively at 193/293 calls. No correctness invariant violation was demonstrated. Center-station, class-rotation and candidate-order sensitivity are quality issues. A no-revisit fixture leaves 25 of 80 calls unused; replaying its retained evidence completes the missed journey with 9 additional calls. Whole-leg breadth spends 20/30 calls after fifth full evidence in the five/seven-direct-train fixtures. These findings are measurements and next-phase recommendations, not implemented tuning.
+
+Validation:
+
+- Evaluation harness: **70 scenarios completed**. Phase 4 tests: **73 passed** (72 subtests plus their parent).
+- Combined focused suite: **211 passed, 0 failed**, including all 25 Phase 3, 20 Phase 1, 40 Phase 2A and 53 Phase 2B tests.
+- `npm test`: **1,076 passed, 0 failed, 0 skipped**, with the external-network guard enabled.
+- `npm run typecheck`: passed. `npm run build`: passed; no server started.
+- `git diff --check`: passed; only Git LF/CRLF conversion notices. New files were also checked for trailing whitespace and report links resolved.
+- Installed Node **22.21.0**; repository target Node **24.x** was not validated here. No live RailKit, real Redis, commit, push, deployment or heuristic tuning.
+
+Focused command:
+
+```powershell
+node --import ./src/test-support/local-network-only.mjs --import tsx --test src/local-railway/tests/availability-evaluation.test.ts src/local-railway/tests/evidence-search.test.ts src/tests/availability-provider-budget.test.ts src/tests/availability-observation-store.test.ts src/tests/availability-persistence.test.ts src/tests/availability-redis.test.ts src/tests/availability-redis-client.test.ts
+```
+
+Recommendation: review the Phase 4 decisions, then separately scope bounded residual-budget revisits and fairness experiments as Phase 5 offline work. A small separately authorized single-instance live diagnostic run has no demonstrated budget/inventory-truth blocker, but these synthetic results do not establish integration readiness or broad production search quality. Do not automatically start tuning or live validation.
+
 ## Product goal and non-negotiable truth
 
 For FROM + TO + DATE + explicit CLASS/classes or ALL, discover the best evidence-backed journeys:
