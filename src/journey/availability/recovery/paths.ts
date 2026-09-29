@@ -1,3 +1,4 @@
+import {beginSearchTiming} from '../../../utils/search-timing.js';
 import type { RecoverySegment, RecoverySolution, ReservedSegment } from './types.js';
 export interface IntervalEdge { from:number; to:number; segment:ReservedSegment }
 export interface Path { segments:RecoverySegment[]; reserved:number; racDistance:number; changes:number; lastClass:string; fragments:number; knownFare:number; missingFares:number }
@@ -21,6 +22,7 @@ export function append(path:Path,segment:RecoverySegment):Path {
 }
 /** Forward DAG DP. Each retained prefix is expanded once; no class Cartesian product. */
 export function intervalPaths(nodes:{code:string;distance:number}[],edges:IntervalEdge[],cap:number,onPrune:(n:number)=>void):Path[]{
+  const endTiming=beginSearchTiming('solver');try{
   const states:Path[][]=nodes.map(()=>[]);states[0]=[{segments:[],reserved:0,racDistance:0,changes:0,lastClass:'',fragments:0,knownFare:0,missingFares:0}];
   for(let i=0;i<nodes.length;i++){
     const unique=new Map<string,Path>();for(const p of states[i]){const key=identity(p),old=unique.get(key);if(!old||rankPath(p,old)<0)unique.set(key,p);}
@@ -33,6 +35,7 @@ export function intervalPaths(nodes:{code:string;distance:number}[],edges:Interv
     }
   }
   return states.at(-1)!;
+  }finally{endTiming();}
 }
 export function rankRecovery(a:RecoverySolution,b:RecoverySolution):number{
   const rac=(s:RecoverySolution)=>s.segments.reduce((n,p)=>n+(p.type==='RESERVED'&&p.availabilityStatus==='RAC'?p.distanceKm:0),0);

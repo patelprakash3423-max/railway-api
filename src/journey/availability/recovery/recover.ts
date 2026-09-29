@@ -1,3 +1,4 @@
+import {beginSearchTiming} from '../../../utils/search-timing.js';
 import { RailwayDatabase } from '../../../local-railway/database.js';
 import { networkFor,eventMinute } from '../../../local-railway/planner/v2/network.js';
 import { runsOnDate } from '../../../local-railway/calendar.js';
@@ -17,6 +18,7 @@ export interface DeferredRecoveryWork { requests: AvailabilityRequest[][] }
 /** Recovery never owns a provider or creates a second budget. Pass the SAME
  * AvailabilitySession used for whole-leg validation. Call sequentially per request. */
 export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean;completeMatrix?:boolean;singleClassPaths?:boolean;evidenceSearch?:{deferWholeLegWidening?:boolean;balancedFairness?:boolean;providerAllowance:number;enough:boolean}}={}):Promise<RecoveryResult>{
+  const endTiming=beginSearchTiming('recovery');try{
   const limits={...defaultRecoveryLimits,...options};
   const allStations=!!(strategy.progressiveStations||strategy.completeMatrix||strategy.evidenceSearch);
   for(const [key,value]of Object.entries(limits))if(!Number.isFinite(value)||(key==='minimumReservedCoverageRatio'?value<=0||value>1:!Number.isSafeInteger(value)||value<1||value>1000))throw new Error(`Invalid recovery limit ${key}`);
@@ -226,11 +228,14 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
   if(eligible.length>limits.maxResults)truncate('results');const best=ranked[0];d.bestReservedCoverageRatio=best.reservedCoverageRatio;d.bestClassChanges=best.classChanges;d.selfManagedDistanceKm=best.selfManagedDistanceKm;
   return{best,solutions:eligible.slice(0,limits.maxResults),diagnostics:{...d,...(evidenceSearch?{evidenceSearch}:{})},checks,
     ...(evidenceResume?{revisit:async(providerAllowance:number,logicalAllowance:number)=>{
+      const endRevisit=beginSearchTiming('revisit');try{
       const previous=session.statistics();
       evidenceSearch=await evidenceResume!(providerAllowance,logicalAllowance);
       const current=session.statistics();d.availabilityRequestsUsed+=current.availabilityRequestsUsed-previous.availabilityRequestsUsed;d.availabilityCacheHits+=current.availabilityCacheHits-previous.availabilityCacheHits;d.budgetRemaining=session.remaining;
       refreshEvidence();return materialize();
+      }finally{endRevisit();}
     }}:{})};
   };
   return materialize();
+  }finally{endTiming();}
 }

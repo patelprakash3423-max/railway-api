@@ -1,3 +1,4 @@
+import {beginSearchTiming,timeSearchAsync} from '../../utils/search-timing.js';
 import {AvailabilityObservations} from '../observations/cache.js';
 import {SqliteAvailabilityObservationStore} from '../observations/sqlite-store.js';
 import {AvailabilityFreshnessPolicy} from '../observations/freshness.js';
@@ -18,7 +19,7 @@ import type {AvailabilityRequest} from '../../domain/types/availability.js';
 
 type CacheKind='INVENTORY'|'UNSUPPORTED_CLASS';
 type CachedEvidence={expires:number;value:unknown;observation?:ObservationMetadata};
-type Waiter={signal?:AbortSignal;run:ReturnType<typeof AsyncLocalStorage.snapshot>;resolve:(v:unknown)=>void;reject:(e:unknown)=>void;cleanup:()=>void;queuedAt:number;waited:boolean};
+type Waiter={endQueue:()=>void;signal?:AbortSignal;run:ReturnType<typeof AsyncLocalStorage.snapshot>;resolve:(v:unknown)=>void;reject:(e:unknown)=>void;cleanup:()=>void;queuedAt:number;waited:boolean};
 type Entry={observation?:ObservationMetadata;reusedObservation?:boolean;observedAt?:number;identityEvidence?:ProviderIdentityEvidence;timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
 /** One default instance covers every raw/normalized availability SDK entry point.
  * Queue owners rotate after each start. Running calls are never preempted.
@@ -53,8 +54,10 @@ export class AvailabilityScheduler {
    this.pending.set(key,entry);this.queue.push(entry);
   }
   const work=entry;
+  const endWait=beginSearchTiming('scheduler_wait');
   const promise=new Promise<unknown>((resolve,reject)=>{
-   const waiter:Waiter={signal,run:AsyncLocalStorage.snapshot(),resolve,reject,cleanup:()=>{},queuedAt:this.now(),waited:!work.running&&this.active>=this.config.providerConcurrency};
+   const waiter:Waiter={endQueue:beginSearchTiming('scheduler_queue'),signal,run:AsyncLocalStorage.snapshot(),resolve,reject,cleanup:()=>{},queuedAt:this.now(),waited:!work.running&&this.active>=this.config.providerConcurrency};
+   if(work.running)waiter.endQueue();
    if(waiter.waited)availabilityMetric('providerQueueWaits');
    const abort=()=>{
     this.finishWait(waiter);work.waiters.delete(waiter);reject(signal!.reason);
@@ -63,13 +66,14 @@ export class AvailabilityScheduler {
      if(!work.running){this.queue=this.queue.filter(e=>e!==work);this.drain();}
     }
    };
-   waiter.cleanup=()=>signal?.removeEventListener('abort',abort);
+   waiter.cleanup=()=>{endWait();signal?.removeEventListener('abort',abort);};
    work.waiters.add(waiter);signal?.addEventListener('abort',abort,{once:true});
   });
   this.drain();
   return promise;
  }
  private finishWait(w:Waiter){
+  w.endQueue();
   const cleanup=w.cleanup;w.cleanup=()=>{};cleanup();
   if(w.waited){w.waited=false;w.run(()=>availabilityMetric('providerQueueWaitMs',Math.max(0,this.now()-w.queuedAt)));}
  }
@@ -90,6 +94,7 @@ export class AvailabilityScheduler {
    // fetch signal with the shared controller. A departed waiter cannot kill peers.
    const task=first.run(()=>inAvailabilityScope(entry.controller.signal,async()=>{
     for(const w of entry.waiters){
+     w.endQueue();
      if(w.waited){w.waited=false;w.run(()=>availabilityMetric('providerQueueWaitMs',Math.max(0,this.now()-w.queuedAt)));}
     }
     entry.controller.signal.throwIfAborted();
@@ -102,7 +107,7 @@ export class AvailabilityScheduler {
      }
     }
     entry.observedAt=this.now();
-    return entry.invoke();
+    return timeSearchAsync('provider_invoke',()=>entry.invoke());
    },{onResponse:status=>{entry.httpStatus=status;},onFailure:category=>{entry.transportFailure=category;}}));
    void task.then(async value=>{
     if(entry.controller.signal.aborted)return;

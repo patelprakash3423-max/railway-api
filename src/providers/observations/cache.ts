@@ -1,3 +1,4 @@
+import {timeSearchAsync} from '../../utils/search-timing.js';
 import {availabilityMetric} from '../availability-observation.js';
 import {validateObservation,makeObservation,type AvailabilityIdentity,type AvailabilityObservation,type AvailabilityObservationStore,type ObservationResult} from './model.js';
 import {AvailabilityFreshnessPolicy} from './freshness.js';
@@ -9,17 +10,17 @@ export class AvailabilityObservations {
  close(){try{this.store.close();}finally{this.redis?.close();}}
  async lookup(identity:AvailabilityIdentity,now:()=>number=Date.now,signal?:AbortSignal):Promise<ObservationLookup>{
   if(this.redis){
-   const cached=await this.redis.lookup(identity,this.policy,now,signal);
+   const cached=await timeSearchAsync('redis_read',()=>this.redis!.lookup(identity,this.policy,now,signal));
    signal?.throwIfAborted();
    if(cached.state==='FRESH')return cached;
   }
   try{
-   const raw=await this.store.getLatest(identity);
+   const raw=await timeSearchAsync('sqlite_read',async()=>this.store.getLatest(identity));
    if(raw===undefined||raw===null){availabilityMetric('persistentCacheMisses');return {state:'MISS'};}
    const time=now();if(!Number.isSafeInteger(time)||time<0)throw Error('Invalid observation clock');
    const observation=validateObservation(raw,identity),freshUntil=this.policy.freshUntil(observation.identity.journeyDate,observation.observedAt,time);
    if(time>=freshUntil){availabilityMetric('persistentCacheStale');return {state:'STALE'};}
-   await this.redis?.remember(observation,this.policy,now,signal);
+   await (this.redis?timeSearchAsync('redis_write',()=>this.redis!.remember(observation,this.policy,now,signal)):undefined);
    signal?.throwIfAborted();
    // Promotion consumes time, not freshness. Recheck before publishing a hit.
    const publishedUntil=this.policy.freshUntil(observation.identity.journeyDate,observation.observedAt,now());
@@ -30,9 +31,9 @@ export class AvailabilityObservations {
  async remember(result:ObservationResult,observedAt:number,now:()=>number=Date.now,signal?:AbortSignal):Promise<AvailabilityObservation|undefined>{
   let observation:AvailabilityObservation;
   try{observation=makeObservation(result,observedAt);}catch{return undefined;}
-  try{await this.store.upsertLatest(observation);}catch{availabilityMetric('persistentCacheWriteErrors');}
+  try{await timeSearchAsync('sqlite_write',async()=>this.store.upsertLatest(observation));}catch{availabilityMetric('persistentCacheWriteErrors');}
   // Valid provider evidence remains usable even if optional durability is unavailable.
-  if(!signal?.aborted)await this.redis?.remember(observation,this.policy,now,signal);
+  if(!signal?.aborted)await (this.redis?timeSearchAsync('redis_write',()=>this.redis!.remember(observation,this.policy,now,signal)):undefined);
   return observation;
  }
 }

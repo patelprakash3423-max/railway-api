@@ -1,3 +1,4 @@
+import {withSearchTiming} from '../../utils/search-timing.js';
 import {invokeAvailabilityProvider} from '../../providers/availability-provider-budget.js';
 import {isAnonymousClient,type ClientIdentityClass} from '../client-identity.js';
 import {JourneyV2ApiService,validateJourneyV2Request} from './journey-v2-service.js';
@@ -78,7 +79,7 @@ export class ProtectedJourneyService {
   provider.remainingTimeMs=()=>Math.max(0,end-this.now());
   provider.currentTimeMs=this.now;
   try{
-   const result=await abortable(signal,()=>new JourneyV2ApiService(this.database,provider,serviceOptions).search(search,requestId));
+   const result=await withSearchTiming(requestId,record=>this.options.logger?.(record),()=>abortable(signal,()=>new JourneyV2ApiService(this.database,provider,serviceOptions).search(search,requestId)));
    checkTime();return result;
   }finally{clearTimeout(timer);lease.release();}
  }

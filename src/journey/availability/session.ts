@@ -1,3 +1,4 @@
+import {timeSearchAsync} from '../../utils/search-timing.js';
 import {AvailabilityProviderBudget,withAvailabilityProviderBudget,invokeAvailabilityProvider,type ProviderCallDiagnostics} from '../../providers/availability-provider-budget.js';
 import {availabilityEvidence,emitAvailabilityEvidence,observeProviderIdentity,type AvailabilityEvidenceSource,type ProviderIdentityEvidence} from '../../providers/availability-evidence.js';
 import {ProviderConfigurationError} from '../../application/errors.js';
@@ -53,6 +54,9 @@ export class AvailabilitySession {
   canAfford(requests: AvailabilityRequest[]) { return this.missingRequests(requests) <= this.remaining; }
   statistics(): SessionStatistics { return { ...this.counts, ...this.providerBudget.statistics(), classChecksByClass:{...this.counts.classChecksByClass},providerErrorCategories:{...this.counts.providerErrorCategories},availabilityBudgetLimit:this.limit,availabilityRequestsUsed:this.budget.callsUsed,attemptedAvailabilityChecks:this.budget.callsUsed,cacheHits:this.counts.availabilityCacheHits,unsupportedClassSkips:this.skippedClasses.size,budgetRemaining:this.logicalRemaining }; }
   async get(request: AvailabilityRequest): Promise<InventoryCheck> {
+    return timeSearchAsync('availability_check',()=>this.getCheck(request));
+  }
+  private async getCheck(request: AvailabilityRequest): Promise<InventoryCheck> {
     this.assertActive();
     this.counts.logicalAvailabilityChecks++;
     this.checkConfiguration();
