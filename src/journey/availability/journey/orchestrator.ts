@@ -31,6 +31,8 @@ export interface RecoveredJourney {
   scheduleRank: number; finalRank: number;
 }
 export interface JourneyOptions extends ValidationOptions {
+  /** Internal sequential baseline; production admits at most two independent direct checks. */
+  directWholeLegConcurrency?:1|2;
   /** Internal historical-evaluation switch. Product AUTO enables bounded revisit. */
   candidateRevisit?:boolean;
   /** Internal historical-evaluation switch. Product AUTO balances stations/classes. */
@@ -72,6 +74,8 @@ export class JourneyRecoveryOrchestrator {
     const mode=input.mode??'STANDARD';
     if(this.options.directSearch!==undefined&&!['AUTO','MATRIX','PROGRESSIVE'].includes(this.options.directSearch))throw new Error('Invalid direct search policy');
     const auto=(this.options.directSearch??'AUTO')==='AUTO';
+    const directConcurrency=this.options.directWholeLegConcurrency??2;
+    if(directConcurrency!==1&&directConcurrency!==2)throw new Error('Invalid direct whole-leg concurrency');
     const matrix=this.options.directSearch!=='PROGRESSIVE';
     if(!['QUICK','STANDARD','DEEP'].includes(mode))throw new Error('Invalid mode');
     const threshold=this.options.minimumJourneyReservedCoverageRatio??.5;
@@ -130,16 +134,36 @@ export class JourneyRecoveryOrchestrator {
       const initialOpportunity=new Set<number>();
       // Class-major whole-leg breadth across ALL direct trains before recovery.
       // No inferred class support and no per-train provider budget is created.
-      for(const c of classes)for(const {candidate,rank}of lane){
+      for(const c of classes){
+       // Bounded class-major windows; the shared scheduler still owns physical
+       // concurrency, cache lookup, quota and atomic provider-budget admission.
+       let window:{rank:number;done:Promise<{error:unknown}|undefined>}[]=[];
+       let windowBefore=session.budget.callsUsed;
+       const flush=async()=>{
+        const batch=window;window=[];
+        const outcomes=await Promise.all(batch.map(x=>x.done)); // At most two.
+        d.wholeLegRequests+=session.budget.callsUsed-windowBefore;
+        windowBefore=session.budget.callsUsed;
+        for(const [i,item]of batch.entries()){
+         if(outcomes[i])throw outcomes[i]!.error;
+         initialOpportunity.add(item.rank);checked.add(item.rank);
+        }
+       };
+       try{for(const {candidate,rank}of lane){
+        // A preceding completion can reach the strong-result threshold. Never
+        // speculate on a lower-preference check that could then be skipped.
+        if(window.length&&this.options.sufficientDirectResults!==false&&all&&initialOpportunity.has(rank)&&redundantClass(candidate,c))await flush();
         session.assertActive();const r=wholeRequest(candidate,c);
         if(session.remainingTimeMs()<=0||!allowed(r.trainNumber,c)||!session.canAfford([r]))continue;
         // Only ALL's lower-preference variants on already strong trains are deferred.
         // Every eligible train keeps its first opportunity; RAC/unknown trains
         // keep all classes. Recheck fresh session evidence at every decision.
         if(this.options.sufficientDirectResults!==false&&all&&initialOpportunity.has(rank)&&sufficientWhole()&&redundantClass(candidate,c))continue;
-        const before=session.budget.callsUsed;await session.get(r);
-        initialOpportunity.add(rank);
-        d.wholeLegRequests+=session.budget.callsUsed-before;checked.add(rank);
+        const capacity=Math.min(directConcurrency,Math.max(1,session.providerBudget.statistics().providerCallBudgetRemaining));
+        // Observe rejection immediately, including while the other check runs.
+        window.push({rank,done:session.get(r).then(()=>undefined,error=>({error}))});
+        if(window.length>=capacity)await flush();
+       }}finally{if(window.length)await flush();}
       }
       const validated=await session.withAllowance(0,()=>validator.validate({...input,plannerCandidates:lane.map(x=>x.candidate)},session));
       const wholes=new Map(validated.journeys.map(whole=>{const index=whole.scheduleRank-1;whole.scheduleRank=lane[index].rank;return [whole.scheduleRank,whole];}));
