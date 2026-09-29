@@ -9,10 +9,81 @@ import {guardedProvider} from '../api/services/protected-journey-service.js';
 import {inAvailabilityScope,availabilitySignal} from '../providers/railkit/availability-abort.js';
 import {emptyAvailabilityMetrics,observeAvailabilityMetrics} from '../providers/availability-observation.js';
 import type {AvailabilityRequest} from '../domain/types/availability.js';
+import {AvailabilityObservations} from '../providers/observations/cache.js';
+import {observeProviderIdentity} from '../providers/availability-evidence.js';
 const request:AvailabilityRequest={trainNumber:'30001',fromStationCode:'AAA',toStationCode:'CCC',journeyDate:'20-09-2099',travelClass:'3A',quota:'GN'};
 const payload=(status='AVAILABLE',date=request.journeyDate)=>({success:true,data:{availability:[{date,status}]}});
 const tick=()=>new Promise<void>(r=>setImmediate(r));
 function deferred<T>(){let resolve!:(v:T)=>void;let reject!:(e:unknown)=>void;const promise=new Promise<T>((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
+
+for(const failure of ['response processing','cache clone','persistence','rejection processing'] as const)
+test(`post-processing failure settles shared waiters and releases one slot: ${failure}`,async t=>{
+ const observations=new AvailabilityObservations({getLatest:()=>undefined,upsertLatest:()=>{},cleanup:()=>0,close:()=>{}});
+ if(failure==='persistence')t.mock.method(observations,'remember',async()=>{throw Error('persistence failed');},{times:1});
+ const scheduler=new AvailabilityScheduler({...hardeningConfig({}),providerConcurrency:1},Date.now,observations);
+ const clear=t.mock.method(globalThis,'clearTimeout');
+ const pending=deferred<unknown>();let calls=0;
+ const one=scheduler.execute(request,()=>{calls++;return pending.promise;});
+ const two=scheduler.execute(request,async()=>{throw Error('must share');});
+ const three=scheduler.execute({...request,travelClass:'SL'},async()=>{calls++;return payload();});
+ const results=Promise.allSettled([one,two,three]);
+ await tick();assert.equal(calls,1);
+ if(failure==='response processing')pending.resolve({get success(){throw Error('response processing failed');}});
+ else if(failure==='cache clone')pending.resolve({...payload(),uncloneable:()=>{}});
+ else if(failure==='rejection processing')pending.reject(new Proxy({}, {get(){throw Error('rejection processing failed');}}));
+ else pending.resolve(payload());
+ const settled=await results;await tick();
+ assert.deepEqual(settled.map(r=>r.status),['rejected','rejected','fulfilled']);
+ assert.equal(calls,2);assert.equal(clear.mock.callCount(),2);
+ const state=scheduler as unknown as {active:number;pending:Map<string,unknown>;queue:unknown[]};
+ assert.equal(state.active,0);assert.equal(state.pending.size,0);assert.equal(state.queue.length,0);
+ // Failed processing must not cache a success or leave the key permanently pending.
+ await scheduler.execute(request,async()=>{calls++;return payload();});await tick();
+ assert.equal(calls,3);assert.equal(state.active,0);assert.equal(clear.mock.callCount(),3);
+});
+
+test('a throwing waiter observer cannot strand peers or repeat waiter cleanup',async t=>{
+ const scheduler=new AvailabilityScheduler({...hardeningConfig({}),providerConcurrency:1});
+ const pending=deferred<unknown>(),controller=new AbortController();
+ const remove=t.mock.method(controller.signal,'removeEventListener');
+ const one=observeProviderIdentity(()=>{throw Error('observer failed');},()=>inAvailabilityScope(controller.signal,()=>scheduler.execute(request,()=>pending.promise)));
+ const two=scheduler.execute(request,async()=>{throw Error('must share');});
+ const rejected=assert.rejects(one,/observer failed/);
+ pending.resolve(payload());await rejected;assert.deepEqual(await two,payload());await tick();
+ assert.equal(remove.mock.callCount(),1);
+ controller.abort();assert.equal(remove.mock.callCount(),1);
+ assert.equal((scheduler as unknown as {active:number}).active,0);
+});
+
+test('a delivery clone failure rejects only its waiter and still releases the slot',async t=>{
+ const scheduler=new AvailabilityScheduler({...hardeningConfig({}),providerConcurrency:1});
+ const clone=globalThis.structuredClone;let clones=0;
+ t.mock.method(globalThis,'structuredClone',<T>(value:T)=>{
+  if(++clones===2)throw Error('delivery clone failed'); // First clone populates the shared cache.
+  return clone(value);
+ });
+ const pending=deferred<unknown>();
+ const one=scheduler.execute(request,()=>pending.promise),two=scheduler.execute(request,async()=>{throw Error('must share');});
+ const rejected=assert.rejects(one,/delivery clone failed/);
+ pending.resolve(payload());await rejected;assert.deepEqual(await two,payload());await tick();
+ assert.equal(clones,3);assert.equal((scheduler as unknown as {active:number}).active,0);
+});
+
+test('timeout during post-processing settles once and holds slot until processing rejects',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const observations=new AvailabilityObservations({getLatest:()=>undefined,upsertLatest:()=>{},cleanup:()=>0,close:()=>{}});
+ const persistence=deferred<undefined>();
+ t.mock.method(observations,'remember',()=>persistence.promise,{times:1});
+ const scheduler=new AvailabilityScheduler({...hardeningConfig({}),providerConcurrency:1,providerTimeoutMs:10},Date.now,observations);
+ let calls=0;
+ const one=scheduler.execute(request,async()=>{calls++;return payload();});
+ const two=scheduler.execute(request,async()=>{throw Error('must share');});
+ const third=scheduler.execute({...request,travelClass:'SL'},async()=>{calls++;return payload();});
+ const failures=[assert.rejects(one,{code:'PROVIDER_TIMEOUT'}),assert.rejects(two,{code:'PROVIDER_TIMEOUT'})];
+ await tick();t.mock.timers.tick(10);await Promise.all(failures);assert.equal(calls,1);
+ persistence.reject(Error('late persistence failure'));await third;await tick();
+ assert.equal(calls,2);assert.equal((scheduler as unknown as {active:number}).active,0);
+});
 
 test('untrusted proxy users share all global slots, never a per-client=1 slot or five-search bucket',()=>{
  const limiter=new SearchProtection(hardeningConfig({}));

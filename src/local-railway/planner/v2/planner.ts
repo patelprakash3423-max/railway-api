@@ -8,6 +8,7 @@ import { journeyIdentity } from '../ranking.js';
 import { networkFor, lowerBounds, eventMinute, type StationTier } from './network.js';
 import { candidateDominates, diversify, rankV2 } from './ranking.js';
 import { defaultV2Limits, deriveMaxChanges, type V2Diagnostics, type V2Journey, type V2Leg, type V2Limits, type V2Result } from './types.js';
+import {memoryPhase} from '../../../utils/search-memory.js';
 export interface SearchState { station: string; arrival: number; departure?: number; distance: number; legs: V2Leg[]; connections: V2Journey['connections']; used: Set<string>; visited: Set<string>; tiers: StationTier[] }
 const subset = (a: Set<string>, b: Set<string>) => [...a].every(x => b.has(x));
 /** Equal absolute arrival preserves the entire [30,360] transfer window. Resource
@@ -23,8 +24,10 @@ export class LocalJourneyPlannerV2 {
     for (const [key, value] of Object.entries(this.limits)) if (!Number.isSafeInteger(value) || value < 1 || value > 100000) throw new Error(`Invalid V2 limit ${key}`);
   }
   search(input: LocalSearchRequest): V2Result {
+    return memoryPhase('planner',()=>{
     this.database.db.exec('BEGIN');
     try { const result = this.snapshot(input); this.database.db.exec('COMMIT'); return result; } catch (error) { this.database.db.exec('ROLLBACK'); throw error; }
+    });
   }
   private snapshot(input: LocalSearchRequest): V2Result {
     const start = performance.now(), from = stationCode(input.from), to = stationCode(input.to), day = parseDate(input.date), dataset = this.database.metadata(), limits = this.limits;

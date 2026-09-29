@@ -70,8 +70,8 @@ export class AvailabilityScheduler {
   return promise;
  }
  private finishWait(w:Waiter){
-  w.cleanup();
-  if(w.waited){w.run(()=>availabilityMetric('providerQueueWaitMs',Math.max(0,this.now()-w.queuedAt)));w.waited=false;}
+  const cleanup=w.cleanup;w.cleanup=()=>{};cleanup();
+  if(w.waited){w.waited=false;w.run(()=>availabilityMetric('providerQueueWaitMs',Math.max(0,this.now()-w.queuedAt)));}
  }
  private remove(entry:Entry){if(this.pending.get(entry.key)===entry)this.pending.delete(entry.key);}
  private drain(){
@@ -82,9 +82,6 @@ export class AvailabilityScheduler {
    if(!entry.waiters.size)continue;
    entry.running=true;this.active++;
    const first=entry.waiters.values().next().value!;
-   for(const w of entry.waiters){
-    if(w.waited){w.run(()=>availabilityMetric('providerQueueWaitMs',Math.max(0,this.now()-w.queuedAt)));w.waited=false;}
-   }
    entry.timer=setTimeout(()=>{
     const error=new PublicError('PROVIDER_TIMEOUT','Availability provider timed out.',504);
     entry.controller.abort(error);this.settle(entry,undefined,error);
@@ -92,6 +89,9 @@ export class AvailabilityScheduler {
    // Restore the active initiating waiter's accounting context, then replace its
    // fetch signal with the shared controller. A departed waiter cannot kill peers.
    const task=first.run(()=>inAvailabilityScope(entry.controller.signal,async()=>{
+    for(const w of entry.waiters){
+     if(w.waited){w.waited=false;w.run(()=>availabilityMetric('providerQueueWaitMs',Math.max(0,this.now()-w.queuedAt)));}
+    }
     entry.controller.signal.throwIfAborted();
     if(this.observations){
      const lookup=await this.observations.lookup(entry.request,this.now,entry.controller.signal);
@@ -146,6 +146,10 @@ export class AvailabilityScheduler {
      first.run(()=>availabilityMetric('providerUnsupportedResponses'));
     }
     this.settle(entry,undefined,{transportEvidence});
+   }).catch(error=>{
+    // The second then argument handles SDK rejection, not exceptions thrown by
+    // normalization, persistence, cloning or either settlement handler.
+    this.settle(entry,undefined,error);
    }).finally(()=>{
     clearTimeout(entry.timer);this.remove(entry);this.active--;this.drain();
    });
@@ -164,8 +168,17 @@ export class AvailabilityScheduler {
  }
  private settle(entry:Entry,value?:unknown,error?:unknown){
   this.remove(entry);
-  for(const w of entry.waiters){if(entry.identityEvidence)w.run(()=>providerIdentityObserved(entry.identityEvidence!));this.finishWait(w);if(error instanceof PublicError&&error.code==='PROVIDER_TIMEOUT')w.run(()=>availabilityMetric('providerTimeouts'));if(error!==undefined)w.reject(error);else w.resolve(attachObservation(structuredClone(value),entry.observation));}
-  entry.waiters.clear();
+  for(const w of entry.waiters){
+   // Remove before callbacks: a failing observer/clone must neither strand its
+   // peers nor let a later timeout settle the same waiter a second time.
+   entry.waiters.delete(w);
+   try{
+    this.finishWait(w);
+    if(entry.identityEvidence)w.run(()=>providerIdentityObserved(entry.identityEvidence!));
+    if(error instanceof PublicError&&error.code==='PROVIDER_TIMEOUT')w.run(()=>availabilityMetric('providerTimeouts'));
+    if(error!==undefined)w.reject(error);else w.resolve(attachObservation(structuredClone(value),entry.observation));
+   }catch(failure){w.reject(failure);}
+  }
  }
 }
 let shared:AvailabilityScheduler|undefined;

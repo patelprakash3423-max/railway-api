@@ -8,6 +8,8 @@ import { jsonLogger } from '../utils/logger.js';
 import { createApiServer, closeApiServer } from './server.js';
 import {openProductionRailwayDatabase} from './services/journey-v2-service.js';
 import {PublicError} from '../application/errors.js';
+import {installCrashDiagnostics} from '../utils/crash-diagnostics.js';
+installCrashDiagnostics();
 try {
   const config = apiConfig();
   const database=openProductionRailwayDatabase();

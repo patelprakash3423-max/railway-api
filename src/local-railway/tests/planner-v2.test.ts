@@ -111,6 +111,35 @@ test('V2 graph cache and indexed ordered route scan',t=>{
   const plan=JSON.stringify(db.db.prepare('EXPLAIN QUERY PLAN '+routeSql).all());assert.match(plan,/USING INDEX/);assert.doesNotMatch(plan,/TEMP B-TREE/);
   db.db.prepare("UPDATE dataset_metadata SET json=json_set(json,'$.importedAt','2026-09-14T00:00:00Z')").run();assert.notEqual(a,networkFor(db));
 });
+
+test('streamed stop rows preserve materialized network and planner semantics',t=>{
+  const services=[direct(),...chain(4,1000),{codes:['OOO','AAA','BBB','ZZZ'],times:[1200,1470,2870,3000],distances:[0,100,undefined,1100],days:['THU'] as Weekday[],dwell:30}];
+  const streamed=fixture(t,services),materialized=fixture(t,services);
+  const streamPrepare=streamed.db.prepare.bind(streamed.db),oldPrepare=materialized.db.prepare.bind(materialized.db);
+  let iterations=0;
+  t.mock.method(streamed.db,'prepare',(sql:string)=>{
+    const statement=streamPrepare(sql);
+    if(sql===routeSql){
+      const iterate=statement.iterate.bind(statement);
+      t.mock.method(statement,'all',()=>{throw Error('train stops must stream');});
+      t.mock.method(statement,'iterate',()=>{iterations++;return iterate();});
+    }
+    return statement;
+  });
+  // Reference path deliberately restores the former eager row materialization.
+  t.mock.method(materialized.db,'prepare',(sql:string)=>{
+    const statement=oldPrepare(sql);
+    if(sql===routeSql)t.mock.method(statement,'iterate',()=>statement.all()[Symbol.iterator]());
+    return statement;
+  });
+  assert.deepEqual(networkFor(streamed),networkFor(materialized));
+  for(const weight of ['distance','duration'] as const)assert.deepEqual(lowerBounds(networkFor(streamed),'ZZZ',weight),lowerBounds(networkFor(materialized),'ZZZ',weight));
+  const a=new LocalJourneyPlannerV2(streamed,{},true).search(request),b=new LocalJourneyPlannerV2(materialized,{},true).search(request);
+  assert.deepEqual({...a,diagnostics:{...a.diagnostics,queryDurationMs:0}},{...b,diagnostics:{...b.diagnostics,queryDurationMs:0}});
+  assert.equal(iterations,1);
+  streamed.db.prepare("UPDATE dataset_metadata SET json=json_set(json,'$.importedAt','2026-09-14T00:00:00Z')").run();
+  networkFor(streamed);assert.equal(iterations,2);
+});
 test('V2 rejects invalid limits and requests',t=>{
   const db=fixture(t,[direct()]);assert.throws(()=>new LocalJourneyPlannerV2(db,{beamWidth:0}),/limit/);const p=new LocalJourneyPlannerV2(db);assert.throws(()=>p.search({...request,maxChanges:6}));assert.throws(()=>p.search({...request,date:'31-02-2026'}));assert.throws(()=>p.search({...request,to:'AAA'}));assert.throws(()=>p.search({...request,to:'MISSING'}));
 });

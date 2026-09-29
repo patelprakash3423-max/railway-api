@@ -1,6 +1,7 @@
 import { RailwayDatabase, stopRow } from '../../database.js';
 import type { LocalTrain, LocalTrainStop } from '../../types.js';
 import { clockMinutes } from '../../../journey/connection/timing.js';
+import {memoryPhase} from '../../../utils/search-memory.js';
 export type StationTier = 'MAJOR' | 'MEDIUM' | 'SMALL';
 export interface StationMetric { trains: number; frequency: number; sourceConnectivity: number; destinationConnectivity: number; score: number; tier: StationTier }
 interface Edge { station: string; distance: number; duration: number }
@@ -12,9 +13,10 @@ export const eventMinute = (s: LocalTrainStop, arrival: boolean) => ((arrival ? 
 export function networkFor(db: RailwayDatabase): Network {
   const version = JSON.stringify(db.metadata());
   const found = cache.get(db); if (found?.version === version) return found.network;
+  return memoryPhase('network_build',()=>{
   const routes = new Map<string, LocalTrainStop[]>(), trains = new Map<string, LocalTrain>();
   for (const r of db.db.prepare('SELECT * FROM trains ORDER BY number').all()) trains.set(String(r.number), { number: String(r.number), name: String(r.name), sourceCode: String(r.source_code), destinationCode: String(r.destination_code), runningDaysRaw: String(r.running_days_raw), runningDays: JSON.parse(String(r.running_days_normalized)) });
-  for (const row of db.db.prepare(routeSql).all()) { const s = stopRow(row); const route = routes.get(s.trainNumber) ?? []; route.push(s); routes.set(s.trainNumber, route); }
+  for (const row of db.db.prepare(routeSql).iterate()) { const s = stopRow(row); const route = routes.get(s.trainNumber) ?? []; route.push(s); routes.set(s.trainNumber, route); }
   const boards = new Map<string, LocalTrainStop[]>(), metrics = new Map<string, StationMetric>(), reverse = new Map<string, Edge[]>();
   const members = new Map<string, Set<string>>(), incoming = new Map<string, Set<string>>(), outgoing = new Map<string, Set<string>>();
   for (const r of db.db.prepare('SELECT code FROM stations ORDER BY code').all()) metrics.set(String(r.code), { trains: 0, frequency: 0, sourceConnectivity: 0, destinationConnectivity: 0, score: 0, tier: 'SMALL' });
@@ -43,6 +45,7 @@ export function networkFor(db: RailwayDatabase): Network {
   const ordered = [...metrics].filter(([, m]) => m.trains > 0).sort((a, b) => b[1].score - a[1].score || a[0].localeCompare(b[0]));
   ordered.forEach(([, m], i) => { m.tier = i < Math.ceil(ordered.length * .10) ? 'MAJOR' : i < Math.ceil(ordered.length * .35) ? 'MEDIUM' : 'SMALL'; });
   const network = { routes, trains, boards, metrics, reverse }; cache.set(db, { version, network }); return network;
+  });
 }
 /** Dijkstra over reverse adjacent-stop edges. Independent minima are admissible. */
 export function lowerBounds(network: Network, destination: string, weight: 'distance' | 'duration'): Map<string, number> {

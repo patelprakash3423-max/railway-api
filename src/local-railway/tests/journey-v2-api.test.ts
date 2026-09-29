@@ -35,9 +35,40 @@ test('production V2 route uses local planner and only availability; compact full
   assert.ok(j.legs.length);assert.ok(j.departureDateTime);assert.ok(j.totalFare);
  }
  assert.equal(r.results[0].presentation.badges[0],'BEST_OPTION');
- assert.doesNotMatch(reply.body,/rawDetails|wholeLegValidation|scheduleCandidate|RAILKIT_API_KEY|providerMessage/);assert.deepEqual(h.logs.map(l=>l.event),['journey_v2_search_started','journey_v2_availability_evidence','journey_v2_availability_evidence','journey_v2_search_completed']);
+ assert.doesNotMatch(reply.body,/rawDetails|wholeLegValidation|scheduleCandidate|RAILKIT_API_KEY|providerMessage/);assert.deepEqual(h.logs.map(l=>l.event),['journey_v2_search_started','journey_v2_planner_started','journey_v2_network_build_started','journey_v2_network_build_completed','journey_v2_planner_completed','journey_v2_availability_evidence','journey_v2_availability_evidence','journey_v2_search_completed']);
+ for(const record of h.logs.filter(l=>/planner_|network_build_/.test(String(l.event)))){
+  assert.equal(record.requestId,r.requestId);assert.ok(Number(record.rss)>0);assert.ok(Number(record.heapUsed)>0);assert.ok(Number(record.elapsedMs)>=0);
+ }
  assert.equal(r.diagnostics.searchMode,'ADAPTIVE_GRAPH');assert.equal(r.diagnostics.stopReason,'SUFFICIENT_HIGH_QUALITY_RESULTS');
  assert.equal(r.diagnostics.checkedMatrixEdges,2);assert.equal(r.diagnostics.possibleMatrixEdges,6);assert.equal(r.diagnostics.directExploration.length,1);
+});
+
+test('phase logs skip warm network builds and include search failure memory',async t=>{
+ const h=setup(t);await h.service.search(h.input,'cold');h.logs.length=0;
+ await h.service.search(h.input,'warm');
+ assert.equal(h.logs.filter(l=>String(l.event).includes('network_build')).length,0);
+ assert.ok(h.logs.some(l=>l.event==='journey_v2_planner_completed'&&l.requestId==='warm'));
+ h.logs.length=0;
+ const prepare=h.db.db.prepare.bind(h.db.db);
+ t.mock.method(h.db.db,'prepare',(sql:string)=>{if(sql.includes('dataset_metadata'))throw Error('forced planner failure');return prepare(sql);});
+ await assert.rejects(h.service.search(h.input,'failed'),/forced planner failure/);
+ assert.deepEqual(h.logs.map(l=>l.event),['journey_v2_search_started','journey_v2_planner_started','journey_v2_planner_failed','journey_v2_search_failed']);
+ for(const record of h.logs.slice(1)){
+  assert.equal(record.requestId,'failed');assert.ok(Number(record.rss)>0);assert.ok(Number(record.heapUsed)>0);assert.ok(Number(record.elapsedMs)>=0);
+ }
+});
+
+test('cold network failure logs memory before propagating the original error',async t=>{
+ const h=setup(t),prepare=h.db.db.prepare.bind(h.db.db);
+ t.mock.method(h.db.db,'prepare',(sql:string)=>{
+  const statement=prepare(sql);
+  if(sql==='SELECT * FROM train_stops ORDER BY train_number,sequence')t.mock.method(statement,'iterate',()=>{throw Error('stream failed');});
+  return statement;
+ });
+ await assert.rejects(h.service.search(h.input,'network-failure'),/stream failed/);
+ assert.deepEqual(h.logs.map(l=>l.event),['journey_v2_search_started','journey_v2_planner_started','journey_v2_network_build_started','journey_v2_network_build_failed','journey_v2_planner_failed','journey_v2_search_failed']);
+ const record=h.logs.find(l=>l.event==='journey_v2_network_build_failed')!;
+ assert.equal(record.requestId,'network-failure');assert.ok(Number(record.rss)>0);assert.ok(Number(record.heapUsed)>0);assert.ok(Number(record.elapsedMs)>=0);
 });
 test('production V2 split class preserves RAC and interval order',async t=>{
  const h=setup(t,r=>r.toStationCode==='BBB'&&r.travelClass==='SL'?'AVAILABLE':r.fromStationCode==='BBB'&&r.travelClass==='3A'?'RAC':'WAITLIST');
