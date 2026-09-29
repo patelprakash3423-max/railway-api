@@ -37,7 +37,7 @@ export function guardedProvider(provider:AvailabilityProvider,signal:AbortSignal
   finally{clearTimeout(timer);}
  }};
 }
-/** Production admission, deadline and shared request clock for V2 search. */
+/** Production admission, caller cancellation and shared request clock for V2 search. */
 export class ProtectedJourneyService {
  private protection:SearchProtection;
  constructor(private readonly database:RailwayDatabase,private readonly provider:AvailabilityProvider,private readonly config:HardeningConfig,private readonly options:{diagnostics?:boolean;logger?:(r:Record<string,unknown>)=>void}={},private readonly now:()=>number=Date.now){this.protection=new SearchProtection(config,now,provider instanceof RailKitProvider?provider.availabilityScheduler.quota:undefined);}
@@ -70,17 +70,13 @@ export class ProtectedJourneyService {
    }
    throw error;
   }
-  const deadline=new AbortController();
-  const signal=context.signal?AbortSignal.any([context.signal,deadline.signal]):deadline.signal;
-  const end=this.now()+this.config.searchTimeoutMs;
-  const timer=setTimeout(()=>deadline.abort(new PublicError('SEARCH_TIMEOUT','Journey search timed out. Please try again.',504)),this.config.searchTimeoutMs);
-  const checkTime=()=>{if(this.now()>=end)deadline.abort(new PublicError('SEARCH_TIMEOUT','Journey search timed out. Please try again.',504));signal.throwIfAborted();};
-  const provider=guardedProvider(this.provider,signal,this.config.providerTimeoutMs,()=>{if(this.provider.quotaAccounting!=='SDK_INVOCATION'){checkTime();lease.consume();}});
-  provider.remainingTimeMs=()=>Math.max(0,end-this.now());
+  const signal=context.signal??new AbortController().signal;
+  const provider=guardedProvider(this.provider,signal,this.config.providerTimeoutMs,()=>{if(this.provider.quotaAccounting!=='SDK_INVOCATION'){signal.throwIfAborted();lease.consume();}});
+  provider.remainingTimeMs=()=>Infinity;
   provider.currentTimeMs=this.now;
   try{
    const result=await withSearchTiming(requestId,record=>this.options.logger?.(record),()=>abortable(signal,()=>new JourneyV2ApiService(this.database,provider,serviceOptions).search(search,requestId)));
-   checkTime();return result;
-  }finally{clearTimeout(timer);lease.release();}
+   signal.throwIfAborted();return result;
+  }finally{lease.release();}
  }
 }

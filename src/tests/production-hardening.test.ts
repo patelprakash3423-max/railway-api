@@ -28,7 +28,7 @@ test('five allowed searches, sixth 429 with zero additional provider calls; heal
  assert.equal((await h.router({method:'GET',path:'/health'})).status,200);assert.equal(h.calls(),5);
 });
 test('per-client and global concurrency reject before provider and release after abort',async t=>{
- const h=setup(t,()=>new Promise(()=>{}),{global:2,searchTimeoutMs:5000});
+ const h=setup(t,()=>new Promise(()=>{}),{global:2});
  const a=new AbortController(),b=new AbortController();
  const one=h.request('a',input,a.signal),two=h.request('b',input,b.signal);
  await new Promise(r=>setImmediate(r));assert.equal(h.calls(),2);
@@ -62,11 +62,23 @@ test('provider timeout is unknown inventory, never WAITLIST or UNAVAILABLE',asyn
  const r=await session.get({trainNumber:'30001',fromStationCode:'AAA',toStationCode:'CCC',journeyDate:input.date,travelClass:'3A',quota:'GN'});
  assert.equal(r.status,'PROVIDER_ERROR');
 });
-test('search deadline returns structured 504 and no further calls',async t=>{
- const h=setup(t,()=>new Promise(()=>{}),{searchTimeoutMs:20,providerTimeoutMs:5000});const start=performance.now();
- const result=await h.request();assert.equal(result.status,504);assert.equal(JSON.parse(result.body).error.code,'SEARCH_TIMEOUT');assert.ok(performance.now()-start<1000);assert.equal(h.calls(),1);
- await new Promise(r=>setTimeout(r,30));assert.equal(h.calls(),1);
+test('search survives the former 90-second deadline and completes naturally',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ let finish!:()=>void;
+ const h=setup(t,r=>new Promise(resolve=>{finish=()=>resolve({request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state:'AVAILABLE'}]});}),{providerTimeoutMs:120000});
+ let settled=false;const pending=h.request().then(result=>{settled=true;return result;});
+ await new Promise(r=>setImmediate(r));assert.equal(h.calls(),1);
+ t.mock.timers.tick(90001);await new Promise(r=>setImmediate(r));assert.equal(settled,false);
+ finish();assert.equal((await pending).status,200);assert.equal(h.calls(),1);
 });
+
+test('caller cancellation still returns promptly and starts no further calls',async t=>{
+ const h=setup(t,()=>new Promise(()=>{}),{providerTimeoutMs:5000}),controller=new AbortController();
+ const pending=h.request('a',input,controller.signal);
+ await new Promise(r=>setImmediate(r));assert.equal(h.calls(),1);
+ controller.abort();await pending;await new Promise(r=>setImmediate(r));assert.equal(h.calls(),1);
+});
+
 test('already aborted search starts zero provider calls',async t=>{const h=setup(t);const c=new AbortController();c.abort();await h.request('a',input,c.signal);assert.equal(h.calls(),0);});
 test('HTTP disconnect reaches pending search and prevents more calls',async t=>{
  const h=setup(t,()=>new Promise(()=>{}));

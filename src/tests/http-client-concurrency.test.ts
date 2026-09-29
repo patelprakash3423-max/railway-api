@@ -41,7 +41,7 @@ function harness(t:TestContext,mode:ClientIdentityMode='ANONYMOUS'){
   globalThis.fetch=previousFetch;
   if(previousKey===undefined)delete process.env.RAILKIT_API_KEY;else process.env.RAILKIT_API_KEY=previousKey;
  });
- const config={...hardeningConfig({}),clientIdentityMode:mode,providerTimeoutMs:5000,searchTimeoutMs:10000};
+ const config={...hardeningConfig({}),clientIdentityMode:mode,providerTimeoutMs:5000};
  const scheduler=new AvailabilityScheduler(config);
  const logs:Record<string,unknown>[]=[];
  const startWaiters:{count:number;resolve:()=>void}[]=[];
