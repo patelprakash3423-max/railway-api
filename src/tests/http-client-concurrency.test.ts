@@ -1,3 +1,4 @@
+import {fixtureRouteId} from '../test-support/route-identity.js';
 import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
@@ -52,6 +53,7 @@ function harness(t:TestContext,mode:ClientIdentityMode='ANONYMOUS'){
  };
  const waitForStarts=(count:number)=>logs.filter(r=>r.event==='journey_v2_search_started').length>=count
   ?Promise.resolve():new Promise<void>(resolve=>startWaiters.push({count,resolve}));
+ const routeId=fixtureRouteId(db,input);
  const service=new ProtectedJourneyService(db,new RailKitProvider(scheduler),config,{diagnostics:true,logger},now);
  const retired={search:async():Promise<never>=>{throw Error('Legacy forbidden');}};
  const options={journeyV2:service,logger,clientIdentityMode:mode};
@@ -60,16 +62,16 @@ function harness(t:TestContext,mode:ClientIdentityMode='ANONYMOUS'){
  t.after(()=>{for(const response of responses)response.emit('close');});
  function send(peer:string|undefined,headers:Record<string,string>={},body:unknown=input){
   let status=0,text='';
-  const incoming=Object.assign(new EventEmitter(),{method:'POST',url:'/api/journeys/v2/search',
+  const incoming=Object.assign(new EventEmitter(),{method:'POST',url:'/api/journeys/v2/availability',
    headers:{'content-type':'application/json',...headers},socket:{remoteAddress:peer},
-   iterator:async function*(){yield Buffer.from(JSON.stringify(body));}});
+   iterator:async function*(){yield Buffer.from(JSON.stringify({...body as object,routeId}));}});
   const outgoing=Object.assign(new EventEmitter(),{writableFinished:false,
    writeHead:(s:number)=>{status=s;},end:(value:string)=>{text=value;outgoing.writableFinished=true;}});
   responses.push(outgoing);
   return handler(incoming as unknown as IncomingMessage,outgoing as unknown as ServerResponse)
    .then(()=>({status,body:JSON.parse(text)}));
  }
- return {send,logs,sdkCalls,scheduler,retired,options,waitForStarts};
+ return {routeId,send,logs,sdkCalls,scheduler,retired,options,waitForStarts};
 }
 function assertRejected(h:ReturnType<typeof harness>,category:string,used:number){
  const log=h.logs.filter(r=>r.event==='journey_v2_search_rejected').at(-1)!;
@@ -166,12 +168,12 @@ test('real loopback HTTP connections admit three independent API clients with th
  t.after(()=>closeApiServer(server));
  const address=server.address();assert.ok(address&&typeof address!=='string');
  const send=()=>new Promise<{status:number;body:any}>((resolve,reject)=>{
-  const req=httpRequest({host:'127.0.0.1',port:address.port,path:'/api/journeys/v2/search',method:'POST',agent:false,
+  const req=httpRequest({host:'127.0.0.1',port:address.port,path:'/api/journeys/v2/availability',method:'POST',agent:false,
    headers:{'content-type':'application/json'}},response=>{
    let text='';response.setEncoding('utf8');response.on('data',chunk=>{text+=chunk;});
    response.on('end',()=>resolve({status:response.statusCode!,body:JSON.parse(text)}));
   });
-  req.on('error',reject);req.end(JSON.stringify(input));
+  req.on('error',reject);req.end(JSON.stringify({...input,routeId:h.routeId}));
  });
  const pending=[send(),send(),send()];
  await h.waitForStarts(3);

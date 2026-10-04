@@ -1,3 +1,4 @@
+import {checkFirstRoute} from '../test-support/selected-route.js';
 import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {AvailabilityProviderBudget,ProviderCallBudgetExhausted,withAvailabilityProviderBudget,invokeAvailabilityProvider} from '../providers/availability-provider-budget.js';
@@ -27,11 +28,11 @@ function fixture(t:TestContext){
  return db;
 }
 
-test('validated provider ceiling defaults to 300 and can only be lowered',()=>{
- assert.equal(hardeningConfig({}).providerCallBudgetLimit,300);
- for(const n of [1,3,5,300])assert.equal(hardeningConfig({JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT:String(n)}).providerCallBudgetLimit,n);
- for(const raw of ['0','-1','NaN','Infinity','3.1','301','invalid'])assert.throws(()=>hardeningConfig({JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT:raw}));
- for(const n of [0,-1,NaN,Infinity,3.1,301])assert.throws(()=>new AvailabilityProviderBudget(n));
+test('validated provider ceiling defaults to 500 and can only be lowered',()=>{
+ assert.equal(hardeningConfig({}).providerCallBudgetLimit,500);
+ for(const n of [1,3,5,300,500])assert.equal(hardeningConfig({JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT:String(n)}).providerCallBudgetLimit,n);
+ for(const raw of ['0','-1','NaN','Infinity','3.1','501','invalid'])assert.throws(()=>hardeningConfig({JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT:raw}));
+ for(const n of [0,-1,NaN,Infinity,3.1,501])assert.throws(()=>new AvailabilityProviderBudget(n));
 });
 
 test('ten unique logical requests admit exactly three SDK/transport owners',async t=>{
@@ -44,11 +45,11 @@ test('ten unique logical requests admit exactly three SDK/transport owners',asyn
  assert.equal(session.statistics().unavailableResponses,0);
 });
 
-test('default production cap prevents the 301st unique outbound availability invocation',async t=>{
+test('default production cap prevents the 501st unique outbound availability invocation',async t=>{
  const h=mock(t),budget=new AvailabilityProviderBudget();
- await withAvailabilityProviderBudget(budget,()=>Promise.all(Array.from({length:310},(_,i)=>h.provider.getAvailability(unique(i)))));
- assert.equal(h.calls(),300);assert.equal(budget.statistics().providerAvailabilityCalls,300);
- assert.equal(h.scheduler.quota.snapshot().monthlyUsed,300);
+ await withAvailabilityProviderBudget(budget,()=>Promise.all(Array.from({length:510},(_,i)=>h.provider.getAvailability(unique(i)))));
+ assert.equal(h.calls(),500);assert.equal(budget.statistics().providerAvailabilityCalls,500);
+ assert.equal(h.scheduler.quota.snapshot().monthlyUsed,500);
 });
 
 test('local and fresh shared inventory hits increase logical checks but cost zero provider calls',async t=>{
@@ -146,18 +147,18 @@ test('direct, recovery, class rounds and subsequent phases share one budget and 
  const logs:Record<string,unknown>[]=[];
  const service=new ProtectedJourneyService(db,provider,{...config(),providerCallBudgetLimit:3},{diagnostics:true,logger:r=>logs.push(r)},()=>Date.UTC(2099,8,20));
  const input={from:'AAA',to:'CCC',date,classes:['SL'],mode:'STANDARD'};
- const r=await service.search(input),d=r.diagnostics!,j=r.results[0];
+ const r=await checkFirstRoute(service,input),d=r.diagnostics!,j=r.results[0];
  assert.equal(calls.length,3);assert.equal(d.providerAvailabilityCalls,3);assert.equal(d.providerCallBudgetRemaining,0);assert.equal(d.providerCallBudgetExhausted,true);
  assert.equal(d.budgetLimit,32768);assert.ok(d.budgetRemaining>0);assert.ok(d.logicalAvailabilityChecks>=3);
  assert.equal(j.status,'INVENTORY_CHECK_INCOMPLETE');assert.equal(j.reservedCoverageRatio,1/3);assert.equal(j.unknownDistanceKm,200);
  assert.deepEqual(j.legs[0].segments.map(s=>[s.type,s.fromStation,s.toStation]),[['RESERVED','AAA','XXX']]);
  assert.equal(logs.find(l=>l.event==='journey_v2_search_completed')!.providerAvailabilityCalls,3);
- const again=await service.search(input);assert.equal(calls.length,6);assert.equal(again.diagnostics!.providerAvailabilityCalls,3);
+ const again=await checkFirstRoute(service,input);assert.equal(calls.length,6);assert.equal(again.diagnostics!.providerAvailabilityCalls,3);
 });
 
 test('unprotected V2 service also enforces the configured cap',async t=>{
  let calls=0;const provider={getAvailability:async(r:AvailabilityRequest):Promise<AvailabilityResult>=>{calls++;return {request:r,provider:'railkit',providerState:'SUCCESS',days:[{date,state:'WAITLIST'}]};}};
- const r=await new JourneyV2ApiService(fixture(t),provider,{diagnostics:true,providerCallBudgetLimit:3}).search({from:'AAA',to:'CCC',date,classes:'ALL'});
+ const r=await checkFirstRoute(new JourneyV2ApiService(fixture(t),provider,{diagnostics:true,providerCallBudgetLimit:3}),{from:'AAA',to:'CCC',date,classes:'ALL'});
  assert.equal(calls,3);assert.equal(r.diagnostics!.providerAvailabilityCalls,3);assert.equal(r.results[0].status,'INVENTORY_CHECK_INCOMPLETE');
  assert.equal(r.results[0].reservedCoverageRatio,0);
 });
@@ -172,8 +173,8 @@ test('fresh unsupported-class cache evidence costs no provider calls',async t=>{
  assert.equal(session.statistics().providerAvailabilityCalls,0);assert.equal(h.calls(),1);
 });
 
-test('process quota denial does not spend the independent search provider budget',async t=>{
- const h=mock(t),scheduler=new AvailabilityScheduler({...config(),burst:1}),provider=new RailKitProvider(scheduler),budget=new AvailabilityProviderBudget(3);
+for(const quota of [{burst:1},{monthly:1}])test(`provider quota ${JSON.stringify(quota)} wins over default 500 search budget`,async t=>{
+ const h=mock(t),scheduler=new AvailabilityScheduler({...config(),...quota}),provider=new RailKitProvider(scheduler),budget=new AvailabilityProviderBudget();
  await withAvailabilityProviderBudget(budget,()=>provider.getAvailability(request));
  const denied=await withAvailabilityProviderBudget(budget,()=>provider.getAvailability(unique(9)));
  assert.equal(denied.failureCategory,'RATE_LIMITED');assert.equal(h.calls(),1);
@@ -198,12 +199,13 @@ test('protected RailKit V2 reports only real admitted owners, including warm-sea
  const h=mock(t,async()=>new Response(JSON.stringify({success:true,data:{availability:[{date,status:'WAITLIST'}]}})));
  const service=new ProtectedJourneyService(fixture(t),h.provider,{...config(),providerCallBudgetLimit:3},{diagnostics:true},()=>Date.UTC(2099,8,20));
  const input={from:'AAA',to:'CCC',date,classes:['SL']};
- const first=await service.search(input);assert.equal(h.calls(),3);assert.equal(first.diagnostics!.providerAvailabilityCalls,3);
- const second=await service.search(input);assert.equal(second.diagnostics!.providerAvailabilityCalls,3);
- // Phase 3 passively rehydrates the preloaded whole-leg edge; that is not a
- // second session.get or a new provider attempt.
- assert.equal(second.diagnostics!.sharedCacheHits,3);assert.equal(second.diagnostics!.logicalAvailabilityChecks,6);assert.equal(second.diagnostics!.cacheHits,0);assert.equal(h.calls(),6);
- assert.equal(second.diagnostics!.actualSdkInvocations,3);
+ const first=await checkFirstRoute(service,input);assert.equal(h.calls(),3);assert.equal(first.diagnostics!.providerAvailabilityCalls,3);
+ const before=h.calls(),second=await checkFirstRoute(service,input);
+ // Cache-only preflight hydrates the strategic frontier without charging SDK calls.
+ assert.ok(second.diagnostics!.providerAvailabilityCalls<=3);
+ assert.ok(second.diagnostics!.sharedCacheHits>=3);
+ assert.equal(second.diagnostics!.providerAvailabilityCalls,h.calls()-before);
+ assert.equal(second.diagnostics!.actualSdkInvocations,h.calls()-before);
 });
 
 test('indirect inventory uses the budget left by direct and same-train work',async t=>{

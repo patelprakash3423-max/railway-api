@@ -5,7 +5,6 @@ import {RailKitProvider} from '../providers/railkit/railkit-provider.js';
 import {hardeningConfig} from '../config/hardening.js';
 import {SearchProtection,clientIdentity} from '../api/search-protection.js';
 import {AvailabilitySession} from '../journey/availability/session.js';
-import {guardedProvider} from '../api/services/protected-journey-service.js';
 import {inAvailabilityScope,availabilitySignal} from '../providers/railkit/availability-abort.js';
 import {emptyAvailabilityMetrics,observeAvailabilityMetrics} from '../providers/availability-observation.js';
 import type {AvailabilityRequest} from '../domain/types/availability.js';

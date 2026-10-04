@@ -1,3 +1,4 @@
+import {selectedProbeEvidence,selectedProbeEvent} from './selected-diagnostics.js';
 import {timeSearchAsync} from '../../utils/search-timing.js';
 import {AvailabilityProviderBudget,withAvailabilityProviderBudget,invokeAvailabilityProvider,type ProviderCallDiagnostics} from '../../providers/availability-provider-budget.js';
 import {availabilityEvidence,emitAvailabilityEvidence,observeProviderIdentity,type AvailabilityEvidenceSource,type ProviderIdentityEvidence} from '../../providers/availability-evidence.js';
@@ -17,7 +18,7 @@ export class AvailabilitySession {
   private readonly cache = new Map<string, InventoryCheck>();
   private readonly pending = new Map<string, Promise<InventoryCheck>>();
   private readonly counts: Omit<SessionStatistics,'availabilityBudgetLimit'|'availabilityRequestsUsed'|'budgetRemaining'|keyof ProviderCallDiagnostics> = { ...emptyAvailabilityMetrics(),availabilityCacheHits:0,classChecksByClass:{},availableResponses:0,racResponses:0,waitlistResponses:0,unavailableResponses:0,unsupportedClassResponses:0,providerErrors:0,providerErrorCategories:{} };
-  constructor(private readonly provider: AvailabilityProvider, readonly limit: number, readonly providerBudget = new AvailabilityProviderBudget(),private readonly now=Date.now) { this.budget = new SearchBudget({ maxAvailabilityCalls:limit }); }
+  constructor(private readonly provider: AvailabilityProvider, readonly limit: number, readonly providerBudget = new AvailabilityProviderBudget(),private readonly now=Date.now,private readonly learnSelectedUnsupportedClasses=false) { this.budget = new SearchBudget({ maxAvailabilityCalls:limit }); }
   private allowanceEnd = Infinity;
   private readonly skippedClasses = new Set<string>();
   private configurationChecked = false;
@@ -50,6 +51,24 @@ export class AvailabilitySession {
   get remaining() { return this.providerBudget.stopped?0:this.logicalRemaining; }
   peekKey(key: string) { const hit=this.cache.get(key);if(hit?.rawDetails?.observation&&(this.now()>=hit.rawDetails.observation.freshUntil||hit.rawDetails.observation.observedAt>this.now())){this.cache.delete(key);return undefined;}return hit; }
   hasKey(key: string) { return !!this.peekKey(key) || this.pending.has(key); }
+  /** Hydrate fresh evidence without admitting a provider miss. */
+  async getCached(request:AvailabilityRequest):Promise<InventoryCheck|undefined>{
+    this.assertActive();const key=requestKey(request),hit=this.peekKey(key);
+    if(hit){selectedProbeEvidence(availabilityEvidence(request,hit,'SEARCH_LOCAL_CACHE',false,hit.evidence));return hit;}
+    if(!this.provider.getCachedAvailability)return undefined;
+    let source:AvailabilityEvidenceSource='SHARED_CACHE';
+    const raw=await observeAvailabilityMetrics((metric,amount)=>{
+      this.counts[metric]+=amount;
+      if(metric==='persistentCacheHits')source='PERSISTENT_CACHE';
+      if(metric==='redisCacheHits')source='REDIS_CACHE';
+    },()=>this.provider.getCachedAvailability!({...request}));
+    this.assertActive();if(!raw)return undefined;
+    const check=normalizeInventory(request,raw);
+    if(!['AVAILABLE','RAC','WAITLIST','UNAVAILABLE'].includes(check.status))return undefined;
+    if(raw.observation&&(this.now()>=raw.observation.freshUntil||raw.observation.observedAt>this.now()))return undefined;
+    check.evidence=availabilityEvidence(request,check,source,false,raw.identityEvidence);
+    this.cache.set(key,check);emitAvailabilityEvidence(check.evidence);return check;
+  }
   missingRequests(requests: AvailabilityRequest[]) { return new Set(requests.map(requestKey).filter(key=>!this.hasKey(key))).size; }
   canAfford(requests: AvailabilityRequest[]) { return this.missingRequests(requests) <= this.remaining; }
   statistics(): SessionStatistics { return { ...this.counts, ...this.providerBudget.statistics(), classChecksByClass:{...this.counts.classChecksByClass},providerErrorCategories:{...this.counts.providerErrorCategories},availabilityBudgetLimit:this.limit,availabilityRequestsUsed:this.budget.callsUsed,attemptedAvailabilityChecks:this.budget.callsUsed,cacheHits:this.counts.availabilityCacheHits,unsupportedClassSkips:this.skippedClasses.size,budgetRemaining:this.logicalRemaining }; }
@@ -66,6 +85,14 @@ export class AvailabilitySession {
       const cached=hit??await pending!;
       const evidence=availabilityEvidence(r,cached,'SEARCH_LOCAL_CACHE',false,cached.evidence);
       emitAvailabilityEvidence(evidence);return {...cached,evidence};
+    }
+    if(this.learnSelectedUnsupportedClasses&&this.unsupported.get(r.trainNumber)?.has(r.travelClass as TravelClass)){
+      // Keep verified fresh interval inventory usable, but never admit a new
+      // provider miss for a train/class explicitly rejected in this request.
+      const cached=await this.getCached(r);if(cached)return cached;
+      this.recordUnsupportedClassSkip(r.trainNumber,r.travelClass);
+      selectedProbeEvent(r,'UNSUPPORTED_TRAIN_CLASS');
+      return {travelClass:r.travelClass as TravelClass,status:'UNSUPPORTED_CLASS',errorCategory:'UNSUPPORTED_CLASS'};
     }
     // Once a miss is denied, stop exploratory work. Local evidence above remains
     // usable, including within an already-admitted logical group.
@@ -98,11 +125,17 @@ export class AvailabilitySession {
       if(result.errorCategory==='RATE_LIMITED')this.counts.providerRateLimited++;
       if(['AVAILABLE','RAC','WAITLIST','UNAVAILABLE'].includes(result.status))this.counts.providerSuccesses++;
       if(result.errorCategory==='UNSUPPORTED_CLASS')result={...result,status:'UNSUPPORTED_CLASS'};
+      if(result.errorCategory==='SECTION_NOT_BOOKABLE')result={...result,status:'SECTION_NOT_BOOKABLE'};
       result={...result,evidence:availabilityEvidence(r,result,source,sdkInvoked,identity)};
       emitAvailabilityEvidence(result.evidence!);
       this.cache.set(key,result);
-      // A provider response describes this route only; it cannot teach train-wide class support.
-      if(result.status==='AVAILABLE')this.counts.availableResponses++;else if(result.status==='RAC')this.counts.racResponses++;else if(result.status==='WAITLIST')this.counts.waitlistResponses++;else if(result.status==='UNAVAILABLE')this.counts.unavailableResponses++;else if(result.errorCategory==='UNSUPPORTED_CLASS')this.counts.unsupportedClassResponses++;else{this.counts.providerErrors++;const category=result.errorCategory??'UNKNOWN_PROVIDER_ERROR';this.counts.providerErrorCategories[category]=(this.counts.providerErrorCategories[category]??0)+1;}
+      // This is a request-local selected-search policy, never persisted as
+      // train-wide inventory or applied to the legacy search modes.
+      if(this.learnSelectedUnsupportedClasses&&result.status==='UNSUPPORTED_CLASS'&&result.errorCategory==='UNSUPPORTED_CLASS'){
+        const classes=this.unsupported.get(r.trainNumber)??new Set<TravelClass>();
+        classes.add(c);this.unsupported.set(r.trainNumber,classes);
+      }
+      if(result.status==='AVAILABLE')this.counts.availableResponses++;else if(result.status==='RAC')this.counts.racResponses++;else if(result.status==='WAITLIST')this.counts.waitlistResponses++;else if(result.status==='UNAVAILABLE')this.counts.unavailableResponses++;else if(result.errorCategory==='UNSUPPORTED_CLASS')this.counts.unsupportedClassResponses++;else if(result.status!=='SECTION_NOT_BOOKABLE'){this.counts.providerErrors++;const category=result.errorCategory??'UNKNOWN_PROVIDER_ERROR';this.counts.providerErrorCategories[category]=(this.counts.providerErrorCategories[category]??0)+1;}
       this.pending.delete(key);return result;
     });
     this.pending.set(key,task);return task;

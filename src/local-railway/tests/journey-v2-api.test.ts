@@ -20,7 +20,12 @@ function setup(t:TestContext,rule:(r:AvailabilityRequest)=>string=()=> 'AVAILABL
  const old={search:async():Promise<never>=>{legacy++;throw Error('Legacy forbidden');}};
  const router=createRouter(old,{journeyV2:service,corsOrigin:'http://localhost:3000',logger:()=>{}});
  const input={from:'AAA',to:'CCC',date,classes:['SL','3A'],mode:'STANDARD'};
- const request=(body:unknown=input)=>router({method:'POST',path:'/api/journeys/v2/search',contentType:'application/json',body:JSON.stringify(body),origin:'http://localhost:3000'});
+ const request=async(body:unknown=input)=>{
+ const discovery=await router({method:'POST',path:'/api/journeys/v2/search',contentType:'application/json',body:JSON.stringify(body)});
+ if(discovery.status!==200)return discovery;
+ logs.length=0;
+ return router({method:'POST',path:'/api/journeys/v2/availability',contentType:'application/json',body:JSON.stringify({...body as object,routeId:JSON.parse(discovery.body).results[0].id}),origin:'http://localhost:3000'});
+ };
  return {db,data,calls,logs,service,old,router,input,request,counts:()=>({discovery,info,legacy})};
 }
 test('production V2 route uses local planner and only availability; compact full result',async t=>{
@@ -35,7 +40,7 @@ test('production V2 route uses local planner and only availability; compact full
   assert.ok(j.legs.length);assert.ok(j.departureDateTime);assert.ok(j.totalFare);
  }
  assert.equal(r.results[0].presentation.badges[0],'BEST_OPTION');
- assert.doesNotMatch(reply.body,/rawDetails|wholeLegValidation|scheduleCandidate|RAILKIT_API_KEY|providerMessage/);assert.deepEqual(h.logs.map(l=>l.event),['journey_v2_search_started','journey_v2_planner_started','journey_v2_network_build_started','journey_v2_network_build_completed','journey_v2_planner_completed','journey_v2_availability_evidence','journey_v2_availability_evidence','journey_v2_search_completed']);
+ assert.doesNotMatch(reply.body,/rawDetails|wholeLegValidation|scheduleCandidate|RAILKIT_API_KEY|providerMessage/);assert.deepEqual(h.logs.map(l=>l.event),['journey_v2_search_started','journey_v2_planner_started','journey_v2_planner_completed','journey_v2_availability_evidence','journey_v2_availability_evidence','journey_v2_search_completed']);
  for(const record of h.logs.filter(l=>/planner_|network_build_/.test(String(l.event)))){
   assert.equal(record.requestId,r.requestId);assert.ok(Number(record.rss)>0);assert.ok(Number(record.heapUsed)>0);assert.ok(Number(record.elapsedMs)>=0);
  }
@@ -74,8 +79,13 @@ test('production V2 split class preserves RAC and interval order',async t=>{
  const h=setup(t,r=>r.toStationCode==='BBB'&&r.travelClass==='SL'?'AVAILABLE':r.fromStationCode==='BBB'&&r.travelClass==='3A'?'RAC':'WAITLIST');
  const reply=await h.request({...h.input,classes:'ALL'}),r=JSON.parse(reply.body);assert.equal(reply.status,200);const j=r.results[0];assert.equal(j.status,'FULLY_RESERVED_WITH_SPLIT_CLASS');assert.equal(j.trainChanges,0);assert.equal(j.classChanges,1);assert.deepEqual(j.legs[0].segments.map((s:{selectedClass:string})=>s.selectedClass),['SL','3A']);assert.equal(j.legs[0].segments[1].availabilityStatus,'RAC');
 });
-test('production V2 partial recovery preserves SELF_MANAGED and incomplete fare',async t=>{
- const h=setup(t,r=>r.toStationCode==='BBB'&&r.travelClass==='SL'?'AVAILABLE':'WAITLIST');const reply=await h.request(),j=JSON.parse(reply.body).results[0];assert.equal(j.status,'PARTIAL_RESERVED_RECOVERY');assert.equal(j.reservedCoverageRatio,.7);assert.equal(j.totalFare.status,'PARTIAL');assert.equal(j.legs[0].segments[1].type,'SELF_MANAGED');assert.ok(!('fare'in j.legs[0].segments[1]));assert.ok(h.calls.length<=30);
+test('production V2 prioritizes uncovered inventory and conservatively reports an incomplete matrix',async t=>{
+ const h=setup(t,r=>r.toStationCode==='BBB'&&r.travelClass==='SL'?'AVAILABLE':'WAITLIST');const reply=await h.request(),r=JSON.parse(reply.body),j=r.results[0];
+ assert.equal(j.status,'INVENTORY_CHECK_INCOMPLETE');assert.equal(j.reservedCoverageRatio,.7);assert.equal(j.totalFare.status,'PARTIAL');
+ assert.equal(j.legs[0].segments.length,1);assert.equal(j.legs[0].segments[0].toStation,'BBB');assert.equal(j.unknownDistanceKm,180);
+ assert.ok(!h.calls.some(p=>p.toStationCode==='BBB'&&p.travelClass==='3A'));
+ assert.equal(r.diagnostics.selectedRoute.probesSkipped.ALREADY_COVERED,1);
+ assert.ok(h.calls.length<=30);
 });
 test('production V2 provider failures retain scheduled incomplete results',async t=>{
  const h=setup(t,()=> 'Provider offline');const reply=await h.request(),r=JSON.parse(reply.body);assert.equal(reply.status,200);assert.ok(r.results.length);assert.equal(r.results[0].status,'INVENTORY_CHECK_INCOMPLETE');assert.equal(r.summary.inventoryIncomplete,1);
@@ -91,7 +101,7 @@ test('V2 preflight retains explicit-origin CORS without invoking any service',as
 test('HTTP handler reads V2 POST body without opening network sockets',async t=>{
  const h=setup(t);let status=0,body='';const request={once:()=>{},removeListener:()=>{},socket:{remoteAddress:'127.0.0.1'},method:'POST',url:'/api/journeys/v2/search',headers:{'content-type':'application/json'},iterator:async function*(){yield Buffer.from(JSON.stringify(h.input));}} as unknown as IncomingMessage;
  const response={once:()=>{},removeListener:()=>{},writeHead:(s:number)=>{status=s;},end:(b:string)=>{body=b;}} as unknown as ServerResponse;
- await createHttpHandler(h.old,{journeyV2:h.service,logger:()=>{}})(request,response);assert.equal(status,200);assert.equal(JSON.parse(body).results[0].status,'FULLY_RESERVED_USABLE');assert.equal(h.counts().legacy,0);
+ await createHttpHandler(h.old,{journeyV2:h.service,logger:()=>{}})(request,response);assert.equal(status,200);assert.equal(JSON.parse(body).results[0].status,'NOT_CHECKED');assert.equal(h.counts().legacy,0);
 });
 test('production dataset rejects missing and synthetic files, accepts valid imported metadata',t=>{
  const h=setup(t),dir=mkdtempSync(join(tmpdir(),'v2-db-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));assert.throws(()=>openProductionRailwayDatabase(join(dir,'missing.sqlite')),/dataset/);
@@ -102,11 +112,29 @@ test('diagnostics are opt-in and defaults are STANDARD GN',async t=>{const h=set
 test('V2 endpoint returns display order after engine output, retaining train data and provider budget',async t=>{
  const h=setup(t,r=>r.trainNumber==='30001'?'RAC':'AVAILABLE');
  h.db.replace({...h.data,trains:[...h.data.trains,{...h.data.trains[0],number:'30002',name:'Available train'}],stops:[...h.data.stops,...h.data.stops.map(s=>({...s,trainNumber:'30002'}))]});
- const reply=await h.request(),r=JSON.parse(reply.body);
- assert.equal(reply.status,200);assert.equal(r.results.length,2);
- assert.deepEqual(r.results.map((j:{legs:{trainNumber:string}[]})=>j.legs[0].trainNumber),['30002','30001']);
+ const r=await h.service.search(h.input);
+ assert.equal(r.results.length,2);
+ assert.deepEqual(r.results.map((j:{legs:{trainNumber:string}[]})=>j.legs[0].trainNumber),['30001','30002']);
  assert.deepEqual(r.results.map((j:{presentation:{displayRank:number}})=>j.presentation.displayRank),[1,2]);
- assert.equal(r.results[0].legs[0].trainName,'Available train');assert.equal(r.results[1].legs[0].segments[0].availabilityStatus,'RAC');
- assert.equal(r.presentation.summary.primaryJourneys,2);assert.equal(r.diagnostics.budgetLimit,32768);assert.equal(r.diagnostics.recoveryReserveInitial,0);
- assert.equal(r.diagnostics.availabilityCalls,h.calls.length);assert.ok(h.calls.length<=30);assert.deepEqual(h.counts(),{discovery:0,info:0,legacy:0});
+ assert.equal(r.results[1].legs[0].trainName,'Available train');assert.equal(r.results[0].status,'NOT_CHECKED');
+ assert.equal(r.presentation.summary.primaryJourneys,2);assert.equal(h.calls.length,0);assert.deepEqual(h.counts(),{discovery:0,info:0,legacy:0});
+});
+
+test('availability HTTP response exposes composed ticket boundaries and safe normalized evidence',async t=>{
+ const h=setup(t,r=>r.fromStationCode==='AAA'&&r.toStationCode==='CCC'?'WAITLIST':'AVAILABLE');
+ const reply=await h.request({...h.input,classes:['SL']}),r=JSON.parse(reply.body);
+ assert.equal(reply.status,200);
+ const s=r.results[0].legs[0].segments[0];
+ assert.equal(s.reservationCount,2);assert.equal(s.reservationParts.length,2);
+ assert.deepEqual(s.reservationParts.map((p:any)=>[p.trainNumber,p.fromStation,p.toStation,p.selectedClass,p.quota,p.availabilityStatus,p.fare]),[['30001','AAA','BBB','SL','GN','AVAILABLE',100],['30001','BBB','CCC','SL','GN','AVAILABLE',100]]);
+ assert.ok(s.reservationParts.every((p:any)=>p.boardingDate&&p.departureDateTime&&p.arrivalDateTime));
+ assert.equal(r.diagnostics.selectedRoute.finalSearchStopReason,'FULL_COVERAGE_FOUND');
+ assert.doesNotMatch(reply.body,/rawDetails|providerMessage|transportEvidence|authorization/i);
+});
+
+test('availability HTTP diagnostics distinguish provider failure with budget left',async t=>{
+ const h=setup(t,()=> 'Provider offline'),reply=await h.request(),r=JSON.parse(reply.body);
+ assert.equal(r.diagnostics.selectedRoute.finalSearchStopReason,'PROVIDER_FAILURE');
+ assert.ok(r.diagnostics.selectedRoute.budgetRemaining>0);
+ assert.ok(r.diagnostics.selectedRoute.trace.some((p:any)=>p.status==='PROVIDER_ERROR'));
 });

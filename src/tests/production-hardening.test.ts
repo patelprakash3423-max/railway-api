@@ -1,3 +1,4 @@
+import {fixtureRouteId} from '../test-support/route-identity.js';
 import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
@@ -17,10 +18,11 @@ function setup(t:TestContext,rule?:(r:AvailabilityRequest)=>Promise<Availability
  const db=new RailwayDatabase(':memory:');t.after(()=>db.close());
  db.replace({stations:['AAA','CCC'].map(code=>({code,name:code})),trains:[{number:'30001',name:'Fixture',sourceCode:'AAA',destinationCode:'CCC',runningDaysRaw:'Daily',runningDays:['MON','TUE','WED','THU','FRI','SAT','SUN']}],stops:[{trainNumber:'30001',stationCode:'AAA',sequence:1,dayOffset:0,departureTime:'06:00',distanceKm:0},{trainNumber:'30001',stationCode:'CCC',sequence:2,dayOffset:0,arrivalTime:'12:00',distanceKm:600}],metadata:{source:'RAILPULL_NTES',importedAt:'2026-09-18T00:00:00Z',trainCount:1,stationCount:2,stopCount:2}});
  let calls=0;
+ const routeId=fixtureRouteId(db,input);
  const service=new ProtectedJourneyService(db,{getAvailability:async r=>{calls++;return rule?rule(r):{request:r,provider:'railkit',providerState:'SUCCESS',days:[{date:r.journeyDate,state:'AVAILABLE'}]};}},{...config(),...patch},{},()=>now);
  const router=createRouter({search:async()=>{throw Error('legacy');}},{journeyV2:service,logger:()=>{}});
- const request=(clientId='a',body:unknown=input,signal?:AbortSignal)=>router({method:'POST',path:'/api/journeys/v2/search',contentType:'application/json',body:JSON.stringify(body),clientId,signal});
- return {service,router,request,calls:()=>calls};
+ const request=(clientId='a',body:unknown=input,signal?:AbortSignal)=>router({method:'POST',path:'/api/journeys/v2/availability',contentType:'application/json',body:JSON.stringify({...body as object,routeId}),clientId,signal});
+ return {routeId,service,router,request,calls:()=>calls};
 }
 test('five allowed searches, sixth 429 with zero additional provider calls; health unaffected',async t=>{
  const h=setup(t);for(let i=0;i<5;i++)assert.equal((await h.request()).status,200);
@@ -82,7 +84,7 @@ test('caller cancellation still returns promptly and starts no further calls',as
 test('already aborted search starts zero provider calls',async t=>{const h=setup(t);const c=new AbortController();c.abort();await h.request('a',input,c.signal);assert.equal(h.calls(),0);});
 test('HTTP disconnect reaches pending search and prevents more calls',async t=>{
  const h=setup(t,()=>new Promise(()=>{}));
- const request=Object.assign(new EventEmitter(),{method:'POST',url:'/api/journeys/v2/search',headers:{'content-type':'application/json'},socket:{remoteAddress:'127.0.0.1'},iterator:async function*(){yield Buffer.from(JSON.stringify(input));}});
+ const request=Object.assign(new EventEmitter(),{method:'POST',url:'/api/journeys/v2/availability',headers:{'content-type':'application/json'},socket:{remoteAddress:'127.0.0.1'},iterator:async function*(){yield Buffer.from(JSON.stringify({...input,routeId:h.routeId}));}});
  const response=Object.assign(new EventEmitter(),{writableFinished:false,writeHead:()=>{},end:()=>{}});
  const pending=createHttpHandler({search:async()=>{throw Error('legacy');}},{journeyV2:h.service,logger:()=>{}})(request as unknown as IncomingMessage,response as unknown as ServerResponse);
  await new Promise(r=>setImmediate(r));assert.equal(h.calls(),1);response.emit('close');await pending;assert.equal(h.calls(),1);

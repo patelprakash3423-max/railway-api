@@ -1,7 +1,7 @@
 import type {JourneyV2Result,JourneyV2Status} from '../../api/services/journey-v2-model.js';
 import type {JourneyBadge,JourneyPresentation,JourneyPresentationGroup,PresentationMetadata} from './types.js';
 export type PresentedJourney = JourneyV2Result & {presentation:JourneyPresentation};
-const tiers:Record<JourneyV2Status,number>={FULLY_RESERVED_USABLE:1,FULLY_RESERVED_WITH_SPLIT_CLASS:2,PARTIAL_RESERVED_RECOVERY:3,SCHEDULED_BUT_NOT_FULLY_AVAILABLE:4,INVENTORY_CHECK_INCOMPLETE:5};
+const tiers:Record<JourneyV2Status,number>={NOT_CHECKED:5,FULLY_RESERVED_USABLE:1,FULLY_RESERVED_WITH_SPLIT_CLASS:2,PARTIAL_RESERVED_RECOVERY:3,SCHEDULED_BUT_NOT_FULLY_AVAILABLE:4,INVENTORY_CHECK_INCOMPLETE:5};
 const group=(status:JourneyV2Status):JourneyPresentationGroup=>tiers[status]<=2?'RECOMMENDED':tiers[status]===3?'RECOVERY':'OTHER';
 const distance=(n:number)=>Number.isFinite(n)?Math.max(0,n):0;
 export function journeySignature(j:JourneyV2Result):string {

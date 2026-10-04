@@ -9,6 +9,8 @@ import type { V2Journey, V2Result } from '../../local-railway/planner/v2/types.j
 import type {AvailabilityMetrics} from '../../providers/availability-observation.js';
 /** The integration cannot access discovery or train-info methods. */
 export type AvailabilityProvider = Pick<RailwayProvider, 'getAvailability'> & {
+  /** Read-only lookup: must never invoke an SDK or consume provider quota. */
+  getCachedAvailability?: (request:import('../../domain/types/availability.js').AvailabilityRequest) => Promise<AvailabilityResult|undefined>;
   assertConfigured?: () => void;
   /** Request cancellation/deadline guard; independent of inventory evidence. */
   assertActive?: () => void;
@@ -21,7 +23,7 @@ export type AvailabilityProvider = Pick<RailwayProvider, 'getAvailability'> & {
   /** Wrapper already admits at its scoped outbound boundary. */
   providerCallAccounting?: 'SCOPED';
 };
-export type InventoryStatus = 'AVAILABLE' | 'RAC' | 'WAITLIST' | 'UNAVAILABLE' | 'UNSUPPORTED_CLASS' | 'PROVIDER_ERROR';
+export type InventoryStatus = 'AVAILABLE' | 'RAC' | 'WAITLIST' | 'UNAVAILABLE' | 'UNSUPPORTED_CLASS' | 'SECTION_NOT_BOOKABLE' | 'PROVIDER_ERROR';
 export type ErrorCategory = import('../../domain/types/provider-failure.js').ProviderFailureCategory | 'PROVIDER_UNAVAILABLE';
 export interface InventoryCheck { evidence?: AvailabilityEvidence; unsupportedScope?: 'EXACT_REQUEST'; travelClass: TravelClass; status: InventoryStatus; availabilityText?: string; fare?: Fare; errorCategory?: ErrorCategory; rawDetails?: AvailabilityResult }
 export type ValidationStatus = 'FULLY_RESERVED_USABLE' | 'SCHEDULED_BUT_NOT_FULLY_AVAILABLE' | 'INVENTORY_CHECK_INCOMPLETE';

@@ -20,7 +20,8 @@ export function validateBookingDate(date:string,horizon:number,now=Date.now()){
  if(day<today||day>today+horizon)throw new PublicError('INVALID_DATE',`Choose a date from today through the next ${horizon} days.`);
 }
 export function guardedProvider(provider:AvailabilityProvider,signal:AbortSignal,timeoutMs:number,consume:()=>void):AvailabilityProvider {
- return {providerCallAccounting:'SCOPED',quotaAccounting:provider.quotaAccounting,assertActive:()=>signal.throwIfAborted(),getAvailability:async request=>{
+ return {providerCallAccounting:'SCOPED',quotaAccounting:provider.quotaAccounting,assertActive:()=>signal.throwIfAborted(),
+  ...(provider.getCachedAvailability?{getCachedAvailability:(request:Parameters<AvailabilityProvider['getAvailability']>[0])=>inAvailabilityScope(signal,()=>provider.getCachedAvailability!(request))}:{}),getAvailability:async request=>{
   signal.throwIfAborted();
   // Shared RailKit work owns its execution timeout and transport signal.
   // The search signal cancels only this waiter; quota belongs to the scheduler.
@@ -43,13 +44,19 @@ export class ProtectedJourneyService {
  constructor(private readonly database:RailwayDatabase,private readonly provider:AvailabilityProvider,private readonly config:HardeningConfig,private readonly options:{diagnostics?:boolean;logger?:(r:Record<string,unknown>)=>void}={},private readonly now:()=>number=Date.now){this.protection=new SearchProtection(config,now,provider instanceof RailKitProvider?provider.availabilityScheduler.quota:undefined);}
  async search(input:unknown,requestId:string=randomUUID(),context:SearchContext={}){
   const search=validateJourneyV2Request(input);validateBookingDate(search.date,this.config.horizonDays,this.now());
+  context.signal?.throwIfAborted();
+  const lease=this.protection.acquire(context.clientId??'unknown-client',0);
+  try{return await new JourneyV2ApiService(this.database,this.provider,this.options).search(search,requestId);}finally{lease.release();}
+ }
+ async checkAvailability(input:unknown,requestId:string=randomUUID(),context:SearchContext={}){
+  const search=validateJourneyV2Request(input);validateBookingDate(search.date,this.config.horizonDays,this.now());
   if(!this.database.station(search.from)||!this.database.station(search.to))throw new PublicError('INVALID_STATION','Station code is not present in the local railway dataset.');
   context.signal?.throwIfAborted();
   const client=context.clientId??'unknown-client';
   // Only static classification and policy flags are logged, never the identity key.
   const identityDiagnostics={clientIdentityClass:context.clientIdentityClass??(isAnonymousClient(client)?'UNKNOWN_PEER':'INTERNAL_CLIENT'),
    perClientEnforced:!isAnonymousClient(client)};
-  const serviceOptions={...this.options,providerCallBudgetLimit:this.config.providerCallBudgetLimit,logger:(record:Record<string,unknown>)=>this.options.logger?.({
+  const serviceOptions={...this.options,selectedRouteBudgetPolicy:this.config.selectedRouteBudgetPolicy,providerCallBudgetLimit:this.config.providerCallBudgetLimit,selectedRouteProviderCallBudgetLimit:this.config.selectedRouteProviderCallBudgetLimit,logger:(record:Record<string,unknown>)=>this.options.logger?.({
    ...record,...identityDiagnostics,
    ...(record.event==='journey_v2_search_started'?{protection:this.protection.snapshot(client)}:{})
   })};
@@ -75,7 +82,7 @@ export class ProtectedJourneyService {
   provider.remainingTimeMs=()=>Infinity;
   provider.currentTimeMs=this.now;
   try{
-   const result=await withSearchTiming(requestId,record=>this.options.logger?.(record),()=>abortable(signal,()=>new JourneyV2ApiService(this.database,provider,serviceOptions).search(search,requestId)));
+   const result=await withSearchTiming(requestId,record=>this.options.logger?.(record),()=>abortable(signal,()=>new JourneyV2ApiService(this.database,provider,serviceOptions).checkAvailability({...search,routeId:(input as Record<string,unknown>).routeId},requestId)));
    signal.throwIfAborted();return result;
   }finally{lease.release();}
  }

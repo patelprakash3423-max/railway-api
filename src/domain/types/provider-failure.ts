@@ -1,8 +1,9 @@
+import {safeProviderErrorDetails,type ProviderErrorDetails} from './provider-error-details.js';
 export const providerFailureCategories = ['PROVIDER_BUDGET_EXHAUSTED','RATE_LIMITED','BOOKING_UNSUPPORTED','INVALID_PROVIDER_RESPONSE','UNKNOWN_PROVIDER_ERROR',
- 'UNSUPPORTED_CLASS','INVALID_REQUEST','AUTHENTICATION_FAILED','ACCESS_DENIED','PROVIDER_SERVER_ERROR','PROVIDER_TIMEOUT','NETWORK_FAILURE'] as const;
+ 'UNSUPPORTED_CLASS','SECTION_NOT_BOOKABLE','INVALID_REQUEST','AUTHENTICATION_FAILED','ACCESS_DENIED','PROVIDER_SERVER_ERROR','PROVIDER_TIMEOUT','NETWORK_FAILURE'] as const;
 export type ProviderFailureCategory = typeof providerFailureCategories[number];
 /** Plain, enumerable, allowlisted evidence: never retain headers or raw bodies. */
-export interface ProviderTransportEvidence {
+export interface ProviderTransportEvidence extends ProviderErrorDetails {
  statusCode?: number;
  failureCategory: ProviderFailureCategory;
  message: string;
@@ -17,6 +18,11 @@ export function providerTransportEvidence(value: unknown, httpStatus?: number): 
  const explicit=saved.failureCategory??v.failureCategory;
  const messages=[saved.message,v.error,v.providerMessage,v.message];
  const unsupported=messages.some(m=>typeof m==='string'&&/^class does not exist in this train for this train route[.!]?$/i.test(m.trim()));
+ const details=safeProviderErrorDetails(value,status);
+ // Exact operation context only. Neither a generic 400 nor the redacted live
+ // message establishes section semantics, permanence, or class independence.
+ const section=explicit==='SECTION_NOT_BOOKABLE'||details.providerErrorCode==='SECTION_NOT_BOOKABLE'||details.providerErrorCode==='BOOKING_SECTION_RESTRICTED'||
+  /^booking (?:is )?not allowed between (?:these|the (?:selected|requested)) stations[.!]?$/i.test(details.providerErrorMessage??'');
  let category:ProviderFailureCategory;
  if(status===429)category='RATE_LIMITED';
  else if(status===401)category='AUTHENTICATION_FAILED';
@@ -24,6 +30,8 @@ export function providerTransportEvidence(value: unknown, httpStatus?: number): 
  else if(status!==undefined&&status>=500)category='PROVIDER_SERVER_ERROR';
  else if(status===400&&(unsupported||explicit==='UNSUPPORTED_CLASS')&&
   (explicit===undefined||explicit==='UNKNOWN_PROVIDER_ERROR'||explicit==='UNSUPPORTED_CLASS'||explicit==='INVALID_REQUEST'))category='UNSUPPORTED_CLASS';
+ else if((status===undefined||status===200||status===400||status===422)&&section&&
+  (explicit===undefined||explicit==='UNKNOWN_PROVIDER_ERROR'||explicit==='INVALID_REQUEST'||explicit==='SECTION_NOT_BOOKABLE'))category='SECTION_NOT_BOOKABLE';
  else if(status===400||status===422)category='INVALID_REQUEST';
  else if(status!==undefined&&status>=400)category='UNKNOWN_PROVIDER_ERROR';
  else if(v.code==='PROVIDER_TIMEOUT'||v.name==='TimeoutError')category='PROVIDER_TIMEOUT';
@@ -31,7 +39,7 @@ export function providerTransportEvidence(value: unknown, httpStatus?: number): 
  else if(v.providerState!=='PROVIDER_UNAVAILABLE'&&unsupported)category='UNSUPPORTED_CLASS';
  else if(messages.some(m=>m===bookingMessage))category='BOOKING_UNSUPPORTED';
  else category='UNKNOWN_PROVIDER_ERROR';
- return {...(status===undefined?{}:{statusCode:status}),failureCategory:category,
+ return {...details,...(status===undefined?{}:{statusCode:status}),failureCategory:category,
   message:category==='UNSUPPORTED_CLASS'?unsupportedMessage:category==='BOOKING_UNSUPPORTED'?bookingMessage:`Availability provider failure: ${category}.`};
 }
 export function providerFailureCategory(value:unknown):ProviderFailureCategory {

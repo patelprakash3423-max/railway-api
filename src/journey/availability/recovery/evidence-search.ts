@@ -1,3 +1,4 @@
+import {searchSelectedEvidence} from './selected-evidence.js';
 import type {TravelClass} from '../../types/journey-segment.js';
 import type {InventoryCheck} from '../types.js';
 import {recoveryClassPreference} from './paths.js';
@@ -10,6 +11,13 @@ export interface EvidenceSearchDiagnostics {
 }
 export const evidenceSearchPolicy=Object.freeze({batchSize:8,frontierSize:512,estimatedAttemptMs:150});
 export interface EvidenceEdge {a:number;b:number;c:TravelClass}
+export interface EvidenceGap {a:number;b:number}
+export type BoundedGapRejection='DUPLICATE'|'EXACT_EVIDENCE_ALREADY_EXISTS'|'UNSUPPORTED_CLASS'|'OUTSIDE_GAP'|'INVALID_STATION_ORDER';
+export type BoundedGapLifecycle='GENERATED'|'REJECTED'|'EXECUTED'|'RESEEDED';
+export interface BoundedProbeProgress {
+ causedGapShrink:boolean;createdNewUnresolvedSubrange:boolean;scheduledFurtherRefinement:boolean;
+ refinementSkipReason:EvidenceStopReason|'NO_INTERNAL_STATIONS'|'UNSUPPORTED_CLASS'|'NO_UNEXPLORED_SMALLER_STRATEGIC_CANDIDATES'|null;
+}
 export type EvidenceRevisit=(providerAllowance:number,logicalAllowance:number)=>Promise<EvidenceSearchDiagnostics>;
 export const candidateRevisitPolicy=Object.freeze({checksPerTurn:8,maxRounds:4,noGainRounds:2});
 export interface CandidateRevisitDiagnostics {
@@ -17,6 +25,21 @@ export interface CandidateRevisitDiagnostics {
  turns:{round:number;trainNumber:string;providerCalls:number;logicalChecks:number;stopReason:EvidenceStopReason}[];
 }
 export interface EvidenceSearchContext {
+ diagnosticProbe?:(edge:EvidenceEdge,reason:string,expansion?:boolean)=>void;
+ diagnosticPriority?:(edge:EvidenceEdge,positiveClassEvidence:boolean)=>void;
+ diagnosticFrontier?:(before:number,after:number)=>void;
+ diagnosticBoundedGap?:(gap:EvidenceGap)=>void;
+ diagnosticBoundedPriority?:()=>void;
+ diagnosticBoundedCandidate?:(event:BoundedGapLifecycle,reason?:BoundedGapRejection)=>void;
+ /** Returns a capped diagnostic record; mutations only annotate the trace. */
+ diagnosticBoundedResult?:(edge:EvidenceEdge,check:InventoryCheck)=>BoundedProbeProgress|undefined;
+ diagnosticBoundedRefinement?:()=>void;
+ diagnosticGapShrink?:(before:EvidenceGap,after:EvidenceGap|null)=>void;
+ unsupportedClass?:(c:TravelClass)=>boolean;
+ nodeDistances?:readonly number[];
+ strategicProbesFirst?:boolean;
+ preferredNodes?:readonly number[];
+ cached?:(edge:EvidenceEdge)=>Promise<InventoryCheck|undefined>;
  deferWholeLegWidening?:boolean;
  balancedFairness?:boolean;
  nodes:number;scopeNodes?:number;classes:TravelClass[];providerAllowance:number;logicalAllowance:number;enough:boolean;
@@ -53,6 +76,7 @@ export function* balancedSpine(nodes:number,classes:TravelClass[]):Generator<{k:
  for(let pass=0;pass<classes.length;pass++)for(const [index,k]of remaining.entries())yield {k,c:classes[(index+pass)%classes.length]};
 }
 export async function searchEvidenceGraph(ctx:EvidenceSearchContext):Promise<EvidenceSearchDiagnostics>{
+ if(ctx.strategicProbesFirst)return searchSelectedEvidence(ctx);
  const possibleMatrixEdges=matrixCost(ctx.scopeNodes??ctx.nodes,ctx.classes.length),last=ctx.nodes-1;
  const visited=new Map<string,EvidenceEdge>(),valid=new Set<string>(),stations=new Set<number>(),classes=new Set<string>();
  let started=ctx.providerUsed(),freshChecks=0,reason:EvidenceStopReason|undefined,providerFailure=false;
@@ -62,7 +86,7 @@ export async function searchEvidenceGraph(ctx:EvidenceSearchContext):Promise<Evi
   for(let a=0;a<last;a++)for(let b=a+1;b<=last;b++)for(const c of ctx.classes)if(truth(ctx.known({a,b,c})))knownCount++;
  }
  const missing=possibleMatrixEdges-knownCount;
- const searchMode:EvidenceSearchMode=!ctx.enough&&missing<=ctx.providerAllowance&&missing<=ctx.logicalAllowance&&missing*evidenceSearchPolicy.estimatedAttemptMs<=ctx.remainingTime()?'EXACT_MATRIX':'ADAPTIVE_GRAPH';
+ const searchMode:EvidenceSearchMode=!ctx.strategicProbesFirst&&!ctx.enough&&missing<=ctx.providerAllowance&&missing<=ctx.logicalAllowance&&missing*evidenceSearchPolicy.estimatedAttemptMs<=ctx.remainingTime()?'EXACT_MATRIX':'ADAPTIVE_GRAPH';
  const observe=async(e:EvidenceEdge):Promise<boolean>=>{
   if(visited.has(key(e)))return true;
   ctx.active();

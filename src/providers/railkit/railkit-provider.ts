@@ -17,6 +17,12 @@ export class RailKitProvider implements RailwayProvider {
   constructor(readonly availabilityScheduler:AvailabilityScheduler=processAvailabilityScheduler()){}
   readonly quotaAccounting = 'SDK_INVOCATION' as const;
   assertConfigured(): void { configureRailKit(); }
+  async getCachedAvailability(request:AvailabilityRequest):Promise<AvailabilityResult|undefined>{
+    validateAvailabilityRequest(request);
+    const raw=await this.availabilityScheduler.lookupCached(request);
+    if(raw===undefined)return undefined;
+    return {...normalizeAvailability(raw,request),observation:observationMetadata(raw)};
+  }
   async searchTrainsBetweenStations(request: TrainSearchRequest): Promise<TrainSearchResult> {
     try {
       validateTrainSearch(request);

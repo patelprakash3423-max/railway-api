@@ -1,4 +1,5 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
+import {safeProviderErrorDetails,type ProviderErrorDetails} from '../domain/types/provider-error-details.js';
 import type {AvailabilityRequest,AvailabilityResult} from '../domain/types/availability.js';
 import {providerFailureCategories,type ProviderFailureCategory} from '../domain/types/provider-failure.js';
 export const identityPresenceFields=['providerTrainIdentityPresent','providerFromIdentityPresent','providerToIdentityPresent','providerClassIdentityPresent','providerQuotaIdentityPresent','providerJourneyDateIdentityPresent'] as const;
@@ -6,7 +7,7 @@ export type ProviderIdentityEvidence=Record<typeof identityPresenceFields[number
  providerIdentityValidation:'VALIDATED'|'REJECTED'|'NOT_PROVIDED'|'NOT_EVALUATED';
 };
 export type AvailabilityEvidenceSource='FRESH_PROVIDER'|'SHARED_INFLIGHT'|'SHARED_CACHE'|'UNSUPPORTED_EVIDENCE_CACHE'|'SEARCH_LOCAL_CACHE'|'NOT_OBSERVED'|'PERSISTENT_CACHE'|'REDIS_CACHE';
-export interface AvailabilityEvidence extends ProviderIdentityEvidence {
+export interface AvailabilityEvidence extends ProviderIdentityEvidence,ProviderErrorDetails {
  observedAt?:number;freshUntil?:number;
  trainNumber:string;from:string;to:string;requestedDate:string;travelClass:string;quota:'GN';
  resultStatus:string;availabilityText?:string;canBook:boolean|'ABSENT';
@@ -36,6 +37,7 @@ export function availabilityEvidence(request:AvailabilityRequest,check:{status:s
  const failure=check.errorCategory;
  return {trainNumber:request.trainNumber,from:request.fromStationCode,to:request.toStationCode,requestedDate:request.journeyDate,travelClass:request.travelClass,quota:request.quota,
   resultStatus:check.status,...safeIdentityEvidence(identity??raw?.identityEvidence),
+  ...(failure==='INVALID_REQUEST'||failure==='SECTION_NOT_BOOKABLE'?safeProviderErrorDetails(raw):{}),
   ...(safeAvailabilityText(day?.availabilityText)?{availabilityText:safeAvailabilityText(day!.availabilityText)}:{}),
   canBook:typeof day?.canBook==='boolean'?day.canBook:'ABSENT',matchingAvailabilityRows:rows?.length??null,exactRequestedDateFound:rows?rows.length>0:null,
   ...(raw?.observation?raw.observation:{}),evidenceSource:source,sdkInvokedForCheck:sdkInvoked,

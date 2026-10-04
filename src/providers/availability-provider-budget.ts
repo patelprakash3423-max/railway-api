@@ -1,6 +1,7 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
 
-export const maximumAvailabilityProviderCalls = 300;
+/** Application per-search safety ceiling, independent of provider window/account quotas. */
+export const maximumAvailabilityProviderCalls = 500;
 export interface ProviderCallDiagnostics {
   providerAvailabilityCalls:number;
   providerCallBudgetLimit:number;

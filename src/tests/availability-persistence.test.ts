@@ -1,3 +1,4 @@
+import {checkFirstRoute} from '../test-support/selected-route.js';
 import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {availabilityStateConfig} from '../config/availability-state.js';
@@ -153,7 +154,7 @@ test('V2 exposes persistent-hit diagnostics and retains ordinary confirmed truth
  db.replace({stations:['AAA','BBB'].map(code=>({code,name:code})),trains:[{number:'30001',name:'Fixture',sourceCode:'AAA',destinationCode:'BBB',runningDaysRaw:'Daily',runningDays:['MON','TUE','WED','THU','FRI','SAT','SUN']}],stops:[{trainNumber:'30001',stationCode:'AAA',sequence:1,dayOffset:0,departureTime:'06:00',distanceKm:0},{trainNumber:'30001',stationCode:'BBB',sequence:2,dayOffset:0,arrivalTime:'08:00',distanceKm:100}],metadata:{source:'RAILPULL_NTES',importedAt:'2099-09-01T00:00:00Z',trainCount:1,stationCount:2,stopCount:2}});
  const h=setup(t);h.seed();const logs:Record<string,unknown>[]=[];
  const service=new ProtectedJourneyService(db,h.create(),hardeningConfig({}),{diagnostics:true,logger:r=>logs.push(r)},h.now);
- const response=await service.search({from:'aaa',to:'bbb',date,classes:['sl']});
+ const response=await checkFirstRoute(service,{from:'aaa',to:'bbb',date,classes:['sl']});
  assert.equal(response.results[0].status,'FULLY_RESERVED_USABLE');assert.equal(response.diagnostics!.persistentCacheHits,1);
  assert.equal(response.diagnostics!.logicalAvailabilityChecks,1);assert.equal(response.diagnostics!.providerAvailabilityCalls,0);assert.equal(h.calls(),0);
  assert.equal(logs.find(r=>r.event==='journey_v2_search_completed')!.persistentCacheHits,1);

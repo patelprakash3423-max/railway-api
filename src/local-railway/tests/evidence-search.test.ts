@@ -44,7 +44,7 @@ test('exact cache-heavy matrix keeps full logical coverage at much lower provide
 test('large matrix uses adaptive graph and reports unexplored evidence honestly',async t=>{
  const f=fixture(t),p=provider(),r=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input),d=r.diagnostics;
  assert.equal(d.searchMode,'ADAPTIVE_GRAPH');assert.equal(d.possibleMatrixEdges,950);assert.ok(d.checkedMatrixEdges<950);
- assert.equal(d.matrixCoverage,100*d.checkedMatrixEdges/950);assert.ok(p.attempts.length<=300);
+ assert.equal(d.matrixCoverage,100*d.checkedMatrixEdges/950);assert.ok(p.attempts.length<=500);
  assert.equal(r.journeys[0].journeyStatus,'INVENTORY_CHECK_INCOMPLETE');assert.equal(r.journeys[0].unknownDistanceKm,1900);
  assert.equal(r.journeys[0].legs[0].segments.length,0);assert.equal(d.stopReason,'MARGINAL_VALUE_LOW');
 });
@@ -52,7 +52,7 @@ test('all trains receive all eligible whole-leg classes before any recovery',asy
  const f=fixture(t,20,3),p=provider(),r=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
  assert.equal(p.attempts.slice(0,15).filter(r=>r.fromStationCode==='A'&&r.toStationCode==='B').length,15);
  assert.equal(new Set(p.attempts.slice(0,3).map(r=>r.trainNumber)).size,3);
- assert.ok(p.attempts.length<=300);assert.equal(r.diagnostics.directTrainsConsidered,3);
+ assert.ok(p.attempts.length<=500);assert.equal(r.diagnostics.directTrainsConsidered,3);
  for(const train of ['43001','43002','43003'])assert.ok(p.attempts.some(r=>r.trainNumber===train&&r.toStationCode!=='B'));
 });
 test('late-route split gets an opportunity with a small provider budget',async t=>{
@@ -139,7 +139,7 @@ test('provider errors cannot produce exact completion or negative coverage',asyn
 });
 
 test('large first train preserves recovery allowance for a smaller later exact matrix',async t=>{
- const f=fixture(t,20,2,[20,4]),p=provider(),r=await new JourneyRecoveryOrchestrator(f.db,p).validate(f.input);
+ const f=fixture(t,20,2,[20,4]),p=provider(),r=await new JourneyRecoveryOrchestrator(f.db,p,{providerCallBudgetLimit:300}).validate(f.input);
  const [large,small]=r.diagnostics.directExploration;
  assert.equal(large.searchMode,'ADAPTIVE_GRAPH');assert.equal(large.stopReason,'FAIRNESS_RESERVE');
  assert.equal(small.searchMode,'EXACT_MATRIX');assert.equal(small.checkedMatrixEdges,30);assert.equal(small.matrixCoverage,100);

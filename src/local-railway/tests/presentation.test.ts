@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {presentJourneys,inventoryQualityScore,journeySignature} from '../../journey/presentation/index.js';
-import type {JourneyV2Result,JourneyV2Status} from '../../api/services/journey-v2-model.js';
+import type {JourneyV2Result} from '../../api/services/journey-v2-model.js';
 const fixture=JSON.parse(readFileSync(new URL('./fixtures/journey-v2.json',import.meta.url),'utf8')).results[0] as JourneyV2Result;
 const make=(id:string,patch:Partial<JourneyV2Result>={}):JourneyV2Result=>{
  const j={...structuredClone(fixture),id,...patch};
@@ -12,7 +12,6 @@ const make=(id:string,patch:Partial<JourneyV2Result>={}):JourneyV2Result=>{
  return j;
 };
 const first=(a:JourneyV2Result,b:JourneyV2Result)=>presentJourneys([a,b]).results[0].id;
-const statuses:JourneyV2Status[]=['FULLY_RESERVED_USABLE','FULLY_RESERVED_WITH_SPLIT_CLASS','PARTIAL_RESERVED_RECOVERY','SCHEDULED_BUT_NOT_FULLY_AVAILABLE','INVENTORY_CHECK_INCOMPLETE'];
 test('coverage precedes status labels and preserves original engine ranks',()=>{
  const partial=unique('partial',{status:'PARTIAL_RESERVED_RECOVERY',reservedCoverageRatio:.6,totalDurationMinutes:500});
  const incomplete=unique('incomplete',{status:'INVENTORY_CHECK_INCOMPLETE',reservedCoverageRatio:.8,totalDurationMinutes:1000});

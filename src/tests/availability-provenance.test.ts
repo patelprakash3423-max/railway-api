@@ -1,3 +1,4 @@
+import {checkFirstRoute} from '../test-support/selected-route.js';
 import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {AvailabilitySession} from '../journey/availability/session.js';
@@ -31,13 +32,15 @@ function database(t:TestContext){
 const search={from:'SV',to:'NDLS',date:request.journeyDate,classes:['SL'],mode:'STANDARD'};
 test('D1 screenshot shape traces exact accepted AVL 2 to the serialized V2 segment',async t=>{
  const h=mocked(t),logs:Record<string,unknown>[]=[],db=database(t);
- const result=await new JourneyV2ApiService(db,h.provider,{diagnostics:true,logger:r=>logs.push(r)}).search(search,'evidence-request');
+ const result=await checkFirstRoute(new JourneyV2ApiService(db,h.provider,{diagnostics:true,logger:r=>logs.push(r)}),search,'evidence-request');
  const segment=result.results[0].legs[0].segments[0];
  assert.equal(segment.type,'RESERVED');if(segment.type==='RESERVED'){assert.equal(segment.availabilityStatus,'AVAILABLE');assert.equal(segment.availabilityText,'AVL 2');}
  const events=logs.filter(l=>l.event==='journey_v2_availability_evidence');assert.equal(events.length,1);
  assert.equal(events[0].requestId,'evidence-request');assert.equal(events[0].level,'debug');
  assert.deepEqual(events[0].evidence,{trainNumber:'12565',from:'SV',to:'NDLS',requestedDate:'18-11-2026',travelClass:'SL',quota:'GN',resultStatus:'AVAILABLE',...Object.fromEntries(identityPresenceFields.map(k=>[k,true])),providerIdentityValidation:'VALIDATED',availabilityText:'AVL 2',canBook:true,matchingAvailabilityRows:1,exactRequestedDateFound:true,evidenceSource:'FRESH_PROVIDER',sdkInvokedForCheck:true});
- assert.doesNotMatch(JSON.stringify(result),/identityEvidence|evidenceSource|matchingAvailabilityRows|canBook|sdkInvokedForCheck/);
+ assert.doesNotMatch(JSON.stringify(result),/identityEvidence|matchingAvailabilityRows|canBook|sdkInvokedForCheck/);
+ assert.doesNotMatch(JSON.stringify(result.results),/evidenceSource/);
+ assert.deepEqual(result.diagnostics!.selectedRoute!.trace.map(p=>p.evidenceSource),['FRESH_PROVIDER','SEARCH_LOCAL_CACHE']);
  assert.equal(h.sdkCalls(),1);
 });
 test('D1 exact requested date WL 200 never becomes AVAILABLE',async t=>{
@@ -61,7 +64,7 @@ test('D1 conflicting data-level journeyDate is rejected',async t=>{
 for(const state of ['AVAILABLE','RAC'])test(`D1 ${state} canBook false remains unusable with exact evidence`,async t=>{
  const h=mocked(t,()=>{const p=payload();p.data.availability[0].status=state;p.data.availability[0].canBook=false;return p;});
  const c=await h.session().get(request);assert.equal(c.errorCategory,'BOOKING_UNSUPPORTED');assert.equal(usable(c),false);assert.equal(c.evidence?.canBook,false);assert.equal(c.evidence?.matchingAvailabilityRows,1);
- const result=await new JourneyV2ApiService(database(t),h.provider).search(search);assert.ok(result.results.every(j=>j.legs.every(l=>l.segments.every(s=>s.type!=='RESERVED'))));
+ const result=await checkFirstRoute(new JourneyV2ApiService(database(t),h.provider),search);assert.ok(result.results.every(j=>j.legs.every(l=>l.segments.every(s=>s.type!=='RESERVED'))));
 });
 test('D1 absent canBook and optional identities are not reported as verified',async t=>{
  const h=mocked(t,()=>({success:true,data:{availability:[{date:request.journeyDate,status:'AVAILABLE',availabilityText:'AVL 2'}]}}));
@@ -109,8 +112,8 @@ test('D1 recognized inventory text remains exact and unknown SDK source is truth
 });
 test('D1 evidence logging is opt-in and cannot change a search or leak into the response',async t=>{
  const h=mocked(t),db=database(t),off:Record<string,unknown>[]=[];
- const a=await new JourneyV2ApiService(db,h.provider,{logger:r=>off.push(r)}).search(search,'same-request');assert.ok(off.every(l=>l.event!=='journey_v2_availability_evidence'));
- const b=await new JourneyV2ApiService(db,h.provider,{diagnostics:true,logger:()=>{throw Error('logger failure');}}).search(search,'same-request');
+ const a=await checkFirstRoute(new JourneyV2ApiService(db,h.provider,{logger:r=>off.push(r)}),search,'same-request');assert.ok(off.every(l=>l.event!=='journey_v2_availability_evidence'));
+ const b=await checkFirstRoute(new JourneyV2ApiService(db,h.provider,{diagnostics:true,logger:()=>{throw Error('logger failure');}}),search,'same-request');
  assert.deepEqual(b.results,a.results);assert.equal(h.sdkCalls(),1);
 });
 
@@ -134,7 +137,7 @@ test('D1 checked AVL segment may belong to an incomplete multi-train journey',as
  db.replace({stations:['SV','NDLS','BBB'].map(code=>({code,name:code})),trains:[first,{...first,number:'30002',sourceCode:'NDLS',destinationCode:'BBB'}],stops:[{trainNumber:'12565',stationCode:'SV',sequence:1,dayOffset:0,departureTime:'06:00',distanceKm:0},{trainNumber:'12565',stationCode:'NDLS',sequence:2,dayOffset:0,arrivalTime:'18:00',distanceKm:800},{trainNumber:'30002',stationCode:'NDLS',sequence:1,dayOffset:0,departureTime:'19:30',distanceKm:0},{trainNumber:'30002',stationCode:'BBB',sequence:2,dayOffset:0,arrivalTime:'23:00',distanceKm:200}],metadata:{source:'RAILPULL_NTES',importedAt:'2026-10-01T00:00:00Z',trainCount:2,stationCount:3,stopCount:4}});
  const logs:Record<string,unknown>[]=[];
  const service=new JourneyV2ApiService(db,{getAvailability:async r=>normalizeAvailability(r.trainNumber==='12565'?payload():{success:false,error:'unknown provider failure'},r)},{diagnostics:true,logger:r=>logs.push(r)});
- const result=await service.search({...search,to:'BBB'});
+ const result=await checkFirstRoute(service,{...search,to:'BBB'});
  const journey=result.results.find(j=>j.legs.length===2);assert.ok(journey);assert.equal(journey.status,'INVENTORY_CHECK_INCOMPLETE');
  const segment=journey.legs[0].segments[0];assert.equal(segment.type,'RESERVED');if(segment.type==='RESERVED')assert.equal(segment.availabilityText,'AVL 2');
  const event=logs.find(l=>l.event==='journey_v2_availability_evidence'&&(l.evidence as AvailabilityEvidence).trainNumber==='12565');assert.ok(event);assert.equal(event.to,'BBB');assert.equal((event.evidence as AvailabilityEvidence).to,'NDLS');assert.equal((event.evidence as AvailabilityEvidence).resultStatus,'AVAILABLE');

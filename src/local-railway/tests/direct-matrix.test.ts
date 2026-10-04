@@ -1,3 +1,4 @@
+import {checkFirstRoute} from '../../test-support/selected-route.js';
 import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {RailwayDatabase} from '../database.js';
@@ -146,12 +147,12 @@ test('protected API exceeds thirty checks without bypassing provider quota',asyn
  const {ProtectedJourneyService}=await import('../../api/services/protected-journey-service.js');
  const {hardeningConfig}=await import('../../config/hardening.js');
  const f=fixture(t,2),p=provider(()=> 'WAITLIST');
- const service=new ProtectedJourneyService(f.db,p,hardeningConfig({}),{diagnostics:true},()=>Date.UTC(2099,8,18));
- const r=await service.search({from:'A',to:'B',date,classes:'ALL',mode:'STANDARD'});
- assert.equal(p.calls.length,48);assert.equal(r.diagnostics!.budgetLimit,32768);assert.equal(r.diagnostics!.providerErrors,0);
+ const service=new ProtectedJourneyService(f.db,p,{...hardeningConfig({}),selectedRouteProviderCallBudgetLimit:50},{diagnostics:true},()=>Date.UTC(2099,8,18));
+ const r=await checkFirstRoute(service,{from:'A',to:'B',date,classes:'ALL',mode:'STANDARD'});
+ assert.ok(p.calls.length>30&&p.calls.length<=50);assert.equal(r.diagnostics!.providerCallBudgetLimit,50);assert.equal(r.diagnostics!.budgetLimit,32768);assert.equal(r.diagnostics!.providerErrors,0);
  const limited=provider(()=> 'WAITLIST');
  const guarded=new ProtectedJourneyService(f.db,limited,{...hardeningConfig({}),burst:12},{diagnostics:true},()=>Date.UTC(2099,8,18));
- const incomplete=await guarded.search({from:'A',to:'B',date,classes:'ALL',mode:'STANDARD'});
+ const incomplete=await checkFirstRoute(guarded,{from:'A',to:'B',date,classes:'ALL',mode:'STANDARD'});
  assert.equal(limited.calls.length,12);assert.ok(incomplete.diagnostics!.providerErrors>0);
  assert.equal(incomplete.results[0].status,'INVENTORY_CHECK_INCOMPLETE');
  assert.equal(incomplete.results[0].reservedCoverageRatio,0);

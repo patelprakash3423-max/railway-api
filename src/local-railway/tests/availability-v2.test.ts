@@ -51,6 +51,17 @@ test('V2 inventory cache includes full segment date class and quota identity',()
   for(const edit of [{trainNumber:'30002'},{fromStationCode:'XXX'},{toStationCode:'YYY'},{journeyDate:'19-09-2026'},{travelClass:'3A'},{quota:'TQ'}])assert.notEqual(requestKey(r),requestKey({...r,...edit} as AvailabilityRequest));
 });
 test('V2 inventory cache is request-local even when orchestrator is reused',async()=>{const h=harness();await h.run();await h.run();assert.equal(h.calls.length,2);});
+test('V2 section restriction is definitive only for the checked class',async()=>{
+ const restricted=harness(()=>{throw {failureCategory:'SECTION_NOT_BOOKABLE'};});
+ const result=await restricted.run();
+ assert.equal(result.journeys[0].status,'SCHEDULED_BUT_NOT_FULLY_AVAILABLE');
+ assert.equal(result.journeys[0].legs[0].availabilityStatus,'SECTION_NOT_BOOKABLE');
+ assert.equal(result.diagnostics.providerErrors,0);
+ const alternate=harness(r=>{if(r.travelClass==='SL')throw {failureCategory:'SECTION_NOT_BOOKABLE'};return answer(r);});
+ const available=await alternate.run(undefined,{requestedClasses:['SL','3A']});
+ assert.equal(available.journeys[0].status,'FULLY_RESERVED_USABLE');
+ assert.deepEqual(alternate.calls.map(r=>r.travelClass),['SL','3A']);
+});
 for(const category of ['RATE_LIMITED','UNSUPPORTED_CLASS','INVALID_REQUEST','BOOKING_UNSUPPORTED','INVALID_PROVIDER_RESPONSE','UNKNOWN_PROVIDER_ERROR'] as const)test(`V2 inventory error category ${category}`,async()=>{
   const h=harness(()=>{throw{failureCategory:category};});const r=await h.run();assert.equal(r.journeys[0].legs[0].availabilityStatus,category==='UNSUPPORTED_CLASS'?'UNSUPPORTED_CLASS':'PROVIDER_ERROR');assert.equal(r.journeys[0].status,category==='UNSUPPORTED_CLASS'?'SCHEDULED_BUT_NOT_FULLY_AVAILABLE':'INVENTORY_CHECK_INCOMPLETE');assert.equal(r.diagnostics.providerErrorCategories[category],category==='UNSUPPORTED_CLASS'?undefined:1);if(category==='UNSUPPORTED_CLASS'){assert.equal(r.diagnostics.unsupportedClassResponses,1);assert.equal(r.diagnostics.providerErrors,0);}assert.equal(r.diagnostics.waitlistResponses,0);
 });

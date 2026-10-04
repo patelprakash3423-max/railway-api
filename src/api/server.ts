@@ -27,7 +27,7 @@ export function createHttpHandler(service: Pick<JourneySearchService, 'search'>,
     const requestId = randomUUID();
     const path = (request.url ?? '/').split('?')[0];
     try {
-      const body = request.method === 'POST' && (path === '/api/v1/journeys/search'||path === '/api/journeys/v2/search') ? await readBody(request.iterator({ destroyOnReturn: false })) : undefined;
+      const body = request.method === 'POST' && (path === '/api/v1/journeys/search'||path === '/api/journeys/v2/search' || path === '/api/journeys/v2/availability') ? await readBody(request.iterator({ destroyOnReturn: false })) : undefined;
       const identity=resolveClientIdentity(request.socket.remoteAddress,
         request.headers['x-forwarded-for']??request.headers.forwarded??request.headers['x-real-ip'],
         options.clientIdentityMode);

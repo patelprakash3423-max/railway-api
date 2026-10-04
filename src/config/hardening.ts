@@ -1,7 +1,11 @@
+import {maximumAvailabilityProviderCalls} from '../providers/availability-provider-budget.js';
+import {selectedRouteBudgetPolicy,type SelectedRouteBudgetPolicy} from './selected-route-budget.js';
 export type ClientIdentityMode='ANONYMOUS'|'DIRECT_PEER';
 export interface HardeningConfig {
  clientIdentityMode:ClientIdentityMode;
  providerCallBudgetLimit:number;
+ selectedRouteProviderCallBudgetLimit?:number;
+ selectedRouteBudgetPolicy:SelectedRouteBudgetPolicy;
  unsupportedCacheTtlMs:number;unsupportedCacheEntries:number;
  providerConcurrency:number;providerCacheTtlMs:number;providerCacheEntries:number;
  rateMax:number;rateWindowMs:number;perClient:number;global:number;
@@ -12,5 +16,5 @@ export function hardeningConfig(env:NodeJS.ProcessEnv=process.env):HardeningConf
  const bounded=(key:string,fallback:number,max:number)=>{const n=integer(key,fallback);if(n>max)throw Error(`Invalid ${key}`);return n;};
  const clientIdentityMode=env.SEARCH_CLIENT_IDENTITY_MODE?.trim()||'ANONYMOUS';
  if(clientIdentityMode!=='ANONYMOUS'&&clientIdentityMode!=='DIRECT_PEER')throw Error('Invalid SEARCH_CLIENT_IDENTITY_MODE');
- return {clientIdentityMode,providerCallBudgetLimit:bounded('JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT',300,300),unsupportedCacheTtlMs:bounded('RAILKIT_UNSUPPORTED_CACHE_TTL_MS',900000,86400000),unsupportedCacheEntries:bounded('RAILKIT_UNSUPPORTED_CACHE_MAX_ENTRIES',1000,10000),providerConcurrency:integer('RAILKIT_AVAILABILITY_MAX_CONCURRENT',2),providerCacheTtlMs:integer('RAILKIT_AVAILABILITY_CACHE_TTL_MS',15000),providerCacheEntries:integer('RAILKIT_AVAILABILITY_CACHE_MAX_ENTRIES',500),rateMax:integer('SEARCH_RATE_LIMIT_MAX',5),rateWindowMs:integer('SEARCH_RATE_LIMIT_WINDOW_MS',600000),perClient:integer('SEARCH_MAX_CONCURRENT_PER_CLIENT',1),global:integer('SEARCH_MAX_CONCURRENT_GLOBAL',3),monthly:integer('RAILKIT_MONTHLY_REQUEST_LIMIT',10000),burst:integer('RAILKIT_BURST_REQUEST_LIMIT',120),burstWindowMs:integer('RAILKIT_BURST_WINDOW_MINUTES',10)*60000,providerTimeoutMs:integer('RAILKIT_REQUEST_TIMEOUT_MS',15000),horizonDays:integer('MAX_BOOKING_HORIZON_DAYS',60)};
+ return {clientIdentityMode,selectedRouteBudgetPolicy:selectedRouteBudgetPolicy(env),selectedRouteProviderCallBudgetLimit:env.SELECTED_ROUTE_AVAILABILITY_PROVIDER_CALL_LIMIT?.trim()?bounded('SELECTED_ROUTE_AVAILABILITY_PROVIDER_CALL_LIMIT',40,500):undefined,providerCallBudgetLimit:bounded('JOURNEY_AVAILABILITY_PROVIDER_CALL_LIMIT',maximumAvailabilityProviderCalls,maximumAvailabilityProviderCalls),unsupportedCacheTtlMs:bounded('RAILKIT_UNSUPPORTED_CACHE_TTL_MS',900000,86400000),unsupportedCacheEntries:bounded('RAILKIT_UNSUPPORTED_CACHE_MAX_ENTRIES',1000,10000),providerConcurrency:integer('RAILKIT_AVAILABILITY_MAX_CONCURRENT',2),providerCacheTtlMs:integer('RAILKIT_AVAILABILITY_CACHE_TTL_MS',15000),providerCacheEntries:integer('RAILKIT_AVAILABILITY_CACHE_MAX_ENTRIES',500),rateMax:integer('SEARCH_RATE_LIMIT_MAX',5),rateWindowMs:integer('SEARCH_RATE_LIMIT_WINDOW_MS',600000),perClient:integer('SEARCH_MAX_CONCURRENT_PER_CLIENT',1),global:integer('SEARCH_MAX_CONCURRENT_GLOBAL',3),monthly:integer('RAILKIT_MONTHLY_REQUEST_LIMIT',10000),burst:integer('RAILKIT_BURST_REQUEST_LIMIT',120),burstWindowMs:integer('RAILKIT_BURST_WINDOW_MINUTES',10)*60000,providerTimeoutMs:integer('RAILKIT_REQUEST_TIMEOUT_MS',15000),horizonDays:integer('MAX_BOOKING_HORIZON_DAYS',60)};
 }

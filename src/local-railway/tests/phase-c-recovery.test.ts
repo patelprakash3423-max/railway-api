@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {RailwayDatabase} from '../database.js';
 import type {LocalDataset} from '../types.js';
 import type {V2Journey} from '../planner/v2/types.js';
-import type {AvailabilityRequest,AvailabilityResult} from '../../domain/types/availability.js';
+import type {AvailabilityRequest} from '../../domain/types/availability.js';
 import {JourneyRecoveryOrchestrator,type JourneyOptions} from '../../journey/availability/journey/orchestrator.js';
 import type {AvailabilityProvider} from '../../journey/availability/types.js';
 import {requestKey} from '../../journey/availability/inventory.js';

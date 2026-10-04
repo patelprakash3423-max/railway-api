@@ -29,3 +29,13 @@ Removed source helpers:
 - `src/local-railway/tests/validate-journey-recovery-v2.ts`
 
 Uncertain usage retained: legacy application/connection/recovery modules remain because meaningful automated tests still import them; logger extraction alone is not proof they are disposable.
+
+## Backend V2 stabilization cleanup
+
+- Removed the ignored `.browser-test-provider-investigation/` directory (`inspect.mjs`, `live.ts`, and `live-results.json`). No backend source, test, package script, or documentation referenced it.
+- Removed 70 ignored repository-root development logs. Validation logs are kept outside the repository.
+- Removed compiler-confirmed unused test imports and the unused presentation-test `statuses` constant. Runtime behavior is unchanged.
+- Retained all `.env.example` variables: each has backend code/test/script references. Real `.env` files remain ignored and are not part of the checkpoint.
+- Existing ignore rules already cover investigation directories, logs, SQLite files and sidecars, dependencies, and build output; no additional ignore patterns were needed.
+- Retained offline evaluation tools/reports, fixtures, legacy modules, the local timetable, and dependency/build directories. They are referenced, operationally required, reproducible output, or not proven obsolete; local databases and generated output remain untracked.
+- Updated API documentation to distinguish zero-provider-call discovery from selected-route availability and the retained CLI matrix policy.

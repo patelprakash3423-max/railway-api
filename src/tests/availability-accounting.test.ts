@@ -1,3 +1,4 @@
+import {fixtureRouteId} from '../test-support/route-identity.js';
 import test, {type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {RailwayDatabase} from '../local-railway/database.js';
@@ -46,9 +47,10 @@ function database(t: TestContext) {
 }
 function harness(t: TestContext, provider = new RailKitProvider(new AvailabilityScheduler(hardeningConfig({}))), patch = {}) {
   const logs: Record<string,unknown>[] = [];
-  const service = new ProtectedJourneyService(database(t),provider,{...hardeningConfig({}),...patch},{diagnostics:true,logger:r=>logs.push(r)},now);
+  const db=database(t);const routeId=fixtureRouteId(db,input);
+  const service = new ProtectedJourneyService(db,provider,{...hardeningConfig({}),...patch},{diagnostics:true,logger:r=>logs.push(r)},now);
   const router = createRouter({search:async()=>{throw Error('Legacy forbidden');}},{journeyV2:service,logger:r=>logs.push(r)});
-  const search = (requestId='accounting-request') => router({method:'POST',path:'/api/journeys/v2/search',contentType:'application/json',body:JSON.stringify(input),clientId:'test-client',requestId});
+  const search = (requestId='accounting-request') => router({method:'POST',path:'/api/journeys/v2/availability',contentType:'application/json',body:JSON.stringify({...input,routeId}),clientId:'test-client',requestId});
   return {search,router,logs};
 }
 
@@ -249,7 +251,7 @@ test('unsupported reuse completion logs separate fresh evidence, cache hits and 
  const completions=h.logs.filter(log=>log.event==='journey_v2_search_completed');assert.equal(completions.length,2);
  assert.equal(completions[0].actualSdkInvocations,1);assert.equal(completions[0].providerUnsupportedResponses,1);assert.equal(completions[0].unsupportedEvidenceCacheHits,0);
  assert.equal(completions[1].actualSdkInvocations,0);assert.equal(completions[1].providerUnsupportedResponses,0);assert.equal(completions[1].unsupportedEvidenceCacheHits,1);
- for(const log of completions){assert.equal(log.attemptedAvailabilityChecks,1);assert.equal(log.unsupportedClassSkips,0);assert.equal(log.sharedCacheHits,0);}
+ for(const log of completions){assert.equal(log.attemptedAvailabilityChecks,1);assert.equal(log.unsupportedClassSkips,1);assert.equal(log.sharedCacheHits,0);}
  for(const reply of [first,second]){
   const body=JSON.parse(reply.body);assert.equal(body.diagnostics.unsupportedClassResponses,1);
   assert.equal(body.diagnostics.unsupportedEvidenceCacheHits,undefined);assert.equal(body.diagnostics.providerUnsupportedResponses,undefined);

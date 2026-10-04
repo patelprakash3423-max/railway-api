@@ -31,6 +31,8 @@ export interface RecoveredJourney {
   scheduleRank: number; finalRank: number;
 }
 export interface JourneyOptions extends ValidationOptions {
+  /** Selected-route checks probe regional opportunities before widening. */
+  strategicProbesFirst?:boolean;
   /** Internal sequential baseline; production admits at most two independent direct checks. */
   directWholeLegConcurrency?:1|2;
   /** Internal historical-evaluation switch. Product AUTO enables bounded revisit. */
@@ -86,7 +88,7 @@ export class JourneyRecoveryOrchestrator {
     if(!Number.isSafeInteger(reserve)||reserve<0||!Number.isFinite(threshold)||threshold<=0||threshold>1||!Number.isSafeInteger(cap)||cap<0||!Number.isSafeInteger(target)||target<1||!batches.length||batches.some(n=>!Number.isSafeInteger(n)||n<1))throw new Error('Invalid journey recovery limits');
     const requestedBudget=this.options.budgetLimit??(matrix?deepJourneySearchPolicy.maxAvailabilityChecks:searchModeConfig(mode).budget!.maxAvailabilityCalls!);
     if(!Number.isSafeInteger(requestedBudget)||requestedBudget<0)throw new Error('Invalid availability budget');
-    const session=new AvailabilitySession(this.provider,matrix?Math.min(requestedBudget,deepJourneySearchPolicy.maxAvailabilityChecks):requestedBudget,new AvailabilityProviderBudget(this.options.providerCallBudgetLimit??hardeningConfig().providerCallBudgetLimit),this.provider.currentTimeMs??Date.now);
+    const session=new AvailabilitySession(this.provider,matrix?Math.min(requestedBudget,deepJourneySearchPolicy.maxAvailabilityChecks):requestedBudget,new AvailabilityProviderBudget(this.options.providerCallBudgetLimit??hardeningConfig().providerCallBudgetLimit),this.provider.currentTimeMs??Date.now,this.options.strategicProbesFirst===true);
     const initialReserve=Math.min(reserve,session.limit);
     const d={directCandidates:0,directWholeLegChecks:0,directWholeLegUsable:0,sameTrainRecoveryCandidates:0,sameTrainStationsEligible:0,sameTrainStationsConsidered:0,sameTrainStationsRemaining:0,sameTrainFullRecoveries:0,directLaneBudgetUsed:0,indirectLaneStarted:false,indirectLaneBudgetUsed:0,recoveryReserveInitial:initialReserve,recoveryReserveUsed:0,recoveryReserveReleased:0,releasedReserveCalls:0,candidatesCheckedWholeLeg:0,plannerCandidatesReceived:input.plannerCandidates.length,wholeLegCandidatesValidated:0,wholeLegUsableJourneys:0,candidatesSentToRecovery:0,legsEligibleForRecovery:0,legsRecoveryAttempted:0,legsRecoverySucceeded:0,coverageFeasibilityPruned:0,candidateRecoveryBudgetPruned:0,fullReservedJourneys:0,fullSplitClassJourneys:0,partialRecoveryJourneys:0,scheduledFallbackJourneys:0,inventoryIncompleteJourneys:0,totalReservedDistanceEvaluated:0,totalSelfManagedDistanceReturned:0,wholeLegRequests:0,recoveryIntervalRequests:0,bottleneckLegsEvaluated:0,recoveryEarlyStops:0,candidatesDeferredByBudget:0,candidatesDeferredByTarget:0,truncated:false,breadthCandidatesConsidered:0,breadthCandidatesChecked:0,breadthRequests:0,completionCandidatesConsidered:0,completionCandidatesChecked:0,completionRequests:0,deepWideningCandidates:0,deepWideningRequests:0,candidatesDeferredByAtomicCost:0,candidatesDeferredByBreadthLimit:0};
     const journeys: RecoveredJourney[]=[];
@@ -186,7 +188,7 @@ export class JourneyRecoveryOrchestrator {
         const before=session.budget.callsUsed;
         const wholeSpent=classes.filter(c=>session.hasKey(requestKey(wholeRequest(candidate,c)))).length;
         const allowance=Math.min(session.remaining,Math.max(0,deepJourneySearchPolicy.maxChecksPerDirectCandidate-wholeSpent),this.options.maxRecoveryRequestsPerCandidate??Infinity);
-        const recovered=await session.withAllowance(allowance,()=>recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,undefined,{evidenceSearch:{deferWholeLegWidening:this.options.sufficientDirectResults!==false&&all&&sufficientWhole()&&strongWhole(candidate),balancedFairness:this.options.balancedFairness,providerAllowance:Math.max(0,remaining-hold),enough:enough||wholeGood(candidate)}}));
+        const recovered=await session.withAllowance(allowance,()=>recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:input.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,undefined,{evidenceSearch:{strategicProbesFirst:this.options.strategicProbesFirst,deferWholeLegWidening:this.options.sufficientDirectResults!==false&&all&&sufficientWhole()&&strongWhole(candidate),balancedFairness:this.options.balancedFairness,providerAllowance:Math.max(0,remaining-hold),enough:enough||wholeGood(candidate)}}));
         d.recoveryIntervalRequests+=session.budget.callsUsed-before;
         directProgress.set(rank,recovered.diagnostics);evidenceProgress.set(rank,recovered.diagnostics.evidenceSearch!);
         if(recovered.diagnostics.candidateIntervalsGenerated>1){d.candidatesSentToRecovery++;d.legsEligibleForRecovery++;d.legsRecoveryAttempted++;}
@@ -347,8 +349,8 @@ export class JourneyRecoveryOrchestrator {
           const allowed=(laneInput.requestedClasses.some(c=>c.trim().toUpperCase()==='ALL')?[...travelClasses]:laneInput.requestedClasses.map(c=>c.trim().toUpperCase())).filter(c=>input.supportedClassesByTrain?.[l.trainNumber]===undefined||input.supportedClassesByTrain[l.trainNumber].map(c=>c.trim().toUpperCase()).includes(c));
           unverified ||= allowed.some(c=>!session.unsupported.get(l.trainNumber)?.has(c as typeof travelClasses[number])&&!l.checks.some(x=>x.travelClass===c))&&!['AVAILABLE','RAC'].includes(l.availabilityStatus??'');
           const usable=l.availabilityStatus==='AVAILABLE'||l.availabilityStatus==='RAC';
-          const failed=!usable&&allowed.every(c=>session.unsupported.get(l.trainNumber)?.has(c as typeof travelClasses[number])||l.checks.some(x=>x.travelClass===c&&(x.status==='WAITLIST'||x.status==='UNAVAILABLE'||x.errorCategory==='UNSUPPORTED_CLASS')));
-          if(failed&&allowed.some(c=>!session.unsupported.get(l.trainNumber)?.has(c as typeof travelClasses[number])))eligible.push(i);
+          const failed=!usable&&allowed.every(c=>session.unsupported.get(l.trainNumber)?.has(c as typeof travelClasses[number])||l.checks.some(x=>x.travelClass===c&&(x.status==='WAITLIST'||x.status==='UNAVAILABLE'||x.status==='SECTION_NOT_BOOKABLE'||x.errorCategory==='UNSUPPORTED_CLASS')));
+          if((failed||this.options.strategicProbesFirst&&!usable)&&allowed.some(c=>!session.unsupported.get(l.trainNumber)?.has(c as typeof travelClasses[number])))eligible.push(i);
           const segments: RecoverySegment[]=usable?[{type:'RESERVED',trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,departureDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,selectedClass:l.selectedClass!,quota:'GN',availabilityStatus:l.availabilityStatus as 'AVAILABLE'|'RAC',availabilityText:l.availabilityText,distanceKm:l.distanceKm,fare:l.fare,reservationParts:[{fromStation:l.fromStation,toStation:l.toStation,departureDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,boardingDate:l.boardingDate,distanceKm:l.distanceKm,availabilityStatus:l.availabilityStatus as 'AVAILABLE'|'RAC',fare:l.fare}]}]:failed?[{type:'SELF_MANAGED',fromStation:l.fromStation,toStation:l.toStation,distanceKm:l.distanceKm,notice:'No reserved coverage or transportation is confirmed for this range.'}]:[];
           return {trainNumber:l.trainNumber,scheduledFrom:l.fromStation,scheduledTo:l.toStation,recoveryStatus:usable?'WHOLE_LEG_USABLE':failed?'CONFIRMED_INVENTORY_FAILURE':'INVENTORY_CHECK_INCOMPLETE',segments,legDistanceKm:l.distanceKm,reservedDistanceKm:usable?l.distanceKm:0,reservedCoverageRatio:usable?1:0,unknownDistanceKm:usable||failed?0:l.distanceKm};
         });
@@ -367,7 +369,7 @@ export class JourneyRecoveryOrchestrator {
         // Unknown whole-leg inventory is never relabelled as a self-managed gap.
         const optimistic=result.reservedDistanceKm+eligible.reduce((n,i)=>n+legs[i].legDistanceKm,0);
         if(recoverCandidate&&eligible.length&&optimistic+1e-9<threshold*result.totalDistanceKm)d.coverageFeasibilityPruned++;
-        else if(recoverCandidate&&eligible.length&&result.unknownDistanceKm===0){
+        else if(recoverCandidate&&eligible.length&&(result.unknownDistanceKm===0||this.options.strategicProbesFirst)){
           if(!recoveryCandidates.has(whole.scheduleRank)){recoveryCandidates.add(whole.scheduleRank);d.candidatesSentToRecovery++;}
           recoveryAttempted.add(whole.scheduleRank);
           eligible.sort((a,b)=>legs[b].legDistanceKm-legs[a].legDistanceKm||legs[a].reservedCoverageRatio-legs[b].reservedCoverageRatio||(input.supportedClassesByTrain?.[legs[a].trainNumber]?.length??8)-(input.supportedClassesByTrain?.[legs[b].trainNumber]?.length??8)||a-b);
@@ -389,14 +391,14 @@ export class JourneyRecoveryOrchestrator {
                 workByLeg.set(i,deferred);
                 if(firstAttempt){d.legsRecoveryAttempted++;d.bottleneckLegsEvaluated++;}
                 const l=whole.scheduleCandidate.segments[i];
-                const recovered=await recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:laneInput.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,deferred,{progressiveStations:directLane,singleClassPaths:auto});
+                const recovered=await recoverSingleTrainLeg(this.database,session,{trainNumber:l.trainNumber,fromStation:l.fromStation,toStation:l.toStation,boardingDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,requestedClasses:laneInput.requestedClasses,supportedClasses:input.supportedClassesByTrain?.[l.trainNumber]},this.options.recoveryLimits,deferred,{progressiveStations:directLane,singleClassPaths:auto,...(this.options.strategicProbesFirst?{evidenceSearch:{strategicProbesFirst:true,providerAllowance:Math.floor(session.providerBudget.statistics().providerCallBudgetRemaining/Math.max(1,eligible.length-eligible.indexOf(i))),enough:false}}:{})});
                 if(phase==='EARLY'&&recovered.diagnostics.progressive)recovered.diagnostics.progressive.complete=false;
                 if(directLane)directProgress.set(whole.scheduleRank,recovered.diagnostics);
                 const best=recovered.best;
                 // Consume the best evidence even below the standalone leg threshold:
                 // eligibility belongs to the complete journey, not individual legs.
                 if(best.reservedDistanceKm>0&&!successfulLegs.has(legKey)){successfulLegs.add(legKey);d.legsRecoverySucceeded++;}
-                legs[i]={...legs[i],recoveryStatus:best.recoveryStatus,segments:best.segments,reservedDistanceKm:best.reservedDistanceKm,reservedCoverageRatio:best.reservedCoverageRatio,unknownDistanceKm:recovered.diagnostics.providerErrors&&best.reservedCoverageRatio<1?best.selfManagedDistanceKm:0};
+                legs[i]={...legs[i],recoveryStatus:best.recoveryStatus,segments:best.segments,reservedDistanceKm:best.reservedDistanceKm,reservedCoverageRatio:best.reservedCoverageRatio,unknownDistanceKm:(recovered.diagnostics.providerErrors||this.options.strategicProbesFirst&&!recovered.diagnostics.progressive?.complete)&&best.reservedCoverageRatio<1?best.selfManagedDistanceKm:0};
                 if(legs[i].unknownDistanceKm)legs[i].segments=best.segments.filter(isReserved);
                 d.truncated ||= recovered.diagnostics.truncated;
                 if(recovered.diagnostics.truncationReasons.includes('availabilityBudget')){candidateCapPruned=true;budgetIncomplete.add(i);}

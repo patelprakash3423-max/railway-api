@@ -19,7 +19,7 @@ export function normalizeInventory(request: AvailabilityRequest, result: Availab
   const base = { travelClass: request.travelClass as TravelClass, rawDetails: result };
   if (!result || result.providerState !== 'SUCCESS') {
     const category=errorCategory(result);
-    return { ...base, status: category==='UNSUPPORTED_CLASS'?'UNSUPPORTED_CLASS':'PROVIDER_ERROR', errorCategory: category, ...(category==='UNSUPPORTED_CLASS'?{unsupportedScope:'EXACT_REQUEST' as const}:{}) };
+    return { ...base, status: category==='UNSUPPORTED_CLASS'?'UNSUPPORTED_CLASS':category==='SECTION_NOT_BOOKABLE'?'SECTION_NOT_BOOKABLE':'PROVIDER_ERROR', errorCategory: category, ...(category==='UNSUPPORTED_CLASS'?{unsupportedScope:'EXACT_REQUEST' as const}:{}) };
   }
   const days = Array.isArray(result.days) ? result.days.filter(d => d.date === request.journeyDate) : [];
   if (!result.request || requestKey(result.request) !== requestKey(request) || days.length !== 1 || !['AVAILABLE','RAC','WAITLIST','NOT_AVAILABLE'].includes(days[0].state)) return { ...base, status: 'PROVIDER_ERROR', errorCategory: 'INVALID_PROVIDER_RESPONSE' };

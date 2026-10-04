@@ -8,7 +8,7 @@ import { redact } from '../utils/errors.js';
 export const MAX_BODY_BYTES = 16384;
 export interface ApiRequest extends SearchContext { method: string; path: string; contentType?: string; origin?: string; body?: string; requestId?: string }
 export interface ApiReply { status: number; headers: Record<string, string>; body: string }
-export interface RouterOptions { clientIdentityMode?:ClientIdentityMode; corsOrigin?: string; logger?: SearchLogger; journeyV2?: {search(input:unknown,requestId?:string,context?:SearchContext):Promise<unknown>} }
+export interface RouterOptions { clientIdentityMode?:ClientIdentityMode; corsOrigin?: string; logger?: SearchLogger; journeyV2?: {checkAvailability?(input:unknown,requestId?:string,context?:SearchContext):Promise<unknown>;search(input:unknown,requestId?:string,context?:SearchContext):Promise<unknown>} }
 export function createRouter(service: Pick<JourneySearchService, 'search'>, options: RouterOptions = {}) {
   const allowedOrigins = new Set(options.corsOrigin?.split(',').map(origin => origin.trim()) ?? []);
   return async (request: ApiRequest): Promise<ApiReply> => {
@@ -21,7 +21,7 @@ export function createRouter(service: Pick<JourneySearchService, 'search'>, opti
       headers['Access-Control-Expose-Headers'] = 'X-Request-Id';
     }
     const reply = (status: number, value: unknown): ApiReply => ({ status, headers, body: redact(JSON.stringify(value)) });
-    const searchPath=request.path==='/api/v1/journeys/search'||request.path==='/api/journeys/v2/search';
+    const searchPath=request.path==='/api/journeys/v2/availability'||request.path==='/api/v1/journeys/search'||request.path==='/api/journeys/v2/search';
     let delegated = false;
     try {
       if (request.path === '/health' && request.method === 'GET') return reply(200, { requestId, status: 'ok' });
@@ -43,6 +43,7 @@ export function createRouter(service: Pick<JourneySearchService, 'search'>, opti
       let body: unknown;
       try { body = JSON.parse(request.body ?? ''); } catch { throw new PublicError('INVALID_REQUEST', 'Invalid JSON request body.'); }
       delegated = true;
+      if(request.path==='/api/journeys/v2/availability'){if(!options.journeyV2?.checkAvailability)throw new PublicError('NOT_FOUND','Availability is not configured.',404);return reply(200,await options.journeyV2.checkAvailability(body,requestId,{signal:request.signal,clientId:request.clientId,clientIdentityClass:request.clientIdentityClass}));}
       if(request.path==='/api/journeys/v2/search'){if(!options.journeyV2)throw new PublicError('NOT_FOUND','Journey V2 is not configured.',404);return reply(200,await options.journeyV2.search(body,requestId,{signal:request.signal,clientId:request.clientId,clientIdentityClass:request.clientIdentityClass}));}
       return reply(200, await service.search(body, requestId));
     } catch (error: unknown) {

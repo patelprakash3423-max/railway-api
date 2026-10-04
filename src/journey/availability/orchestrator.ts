@@ -42,7 +42,7 @@ export class AvailabilityOrchestrator {
     type State=typeof states[number];
     const request=(s:State,i:number,c:TravelClass):AvailabilityRequest=>{const leg=s.candidate.segments[i];return{trainNumber:leg.trainNumber,fromStationCode:leg.fromStation,toStationCode:leg.toStation,journeyDate:leg.boardingDate,travelClass:c,quota:'GN'};};
     const hasUsable=(s:State,i:number)=>[...s.checks[i].values()].some(usable);
-    const definitiveFailure=(s:State,i:number)=>!hasUsable(s,i)&&s.allowed[i].every(c=>{if(unsupported.get(s.candidate.segments[i].trainNumber)?.has(c))return true;const x=s.checks[i].get(c);return x&&(x.status==='WAITLIST'||x.status==='UNAVAILABLE'||x.errorCategory==='UNSUPPORTED_CLASS');});
+    const definitiveFailure=(s:State,i:number)=>!hasUsable(s,i)&&s.allowed[i].every(c=>{if(unsupported.get(s.candidate.segments[i].trainNumber)?.has(c))return true;const x=s.checks[i].get(c);return x&&(x.status==='WAITLIST'||x.status==='UNAVAILABLE'||x.status==='SECTION_NOT_BOOKABLE'||x.errorCategory==='UNSUPPORTED_CLASS');});
     const isUsable=(s:State)=>s.checks.every((_,i)=>hasUsable(s,i));
     const knownUnsupported=(s:State,i:number,c:TravelClass)=>{
       const skipped=unsupported.get(s.candidate.segments[i].trainNumber)?.has(c);
@@ -185,7 +185,7 @@ export class AvailabilityOrchestrator {
       if(s.checks.every((_,i)=>hasUsable(s,i)||definitiveFailure(s,i)))d.candidatesFullyValidated++;
       if(blocked&&!chosen)d.candidatesRejectedByInventory++;
       if(s.deferred&&!chosen)d.candidatesDeferredByBudget++;
-      const priority={AVAILABLE:0,RAC:1,WAITLIST:2,UNAVAILABLE:3,UNSUPPORTED_CLASS:4,PROVIDER_ERROR:5};
+      const priority={AVAILABLE:0,RAC:1,WAITLIST:2,UNAVAILABLE:3,UNSUPPORTED_CLASS:4,SECTION_NOT_BOOKABLE:5,PROVIDER_ERROR:5};
       const legs=s.candidate.segments.map((leg,i)=>{
         const check=chosen?.[i]??[...s.checks[i].values()].sort((a,b)=>priority[a.status]-priority[b.status]||requested.indexOf(a.travelClass)-requested.indexOf(b.travelClass))[0];
         return{trainNumber:leg.trainNumber,fromStation:leg.fromStation,toStation:leg.toStation,boardingDate:leg.boardingDate,departureDateTime:leg.departureDateTime,arrivalDateTime:leg.arrivalDateTime,distanceKm:leg.distanceKm,selectedClass:check?.travelClass??null,quota:'GN' as const,availabilityStatus:check?.status??null,availabilityText:check?.availabilityText,fare:check?.fare,checks:[...s.checks[i].values()]};

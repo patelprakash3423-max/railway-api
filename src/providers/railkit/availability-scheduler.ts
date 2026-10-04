@@ -35,6 +35,19 @@ export class AvailabilityScheduler {
  private caches:Record<CacheKind,Map<string,CachedEvidence>>={INVENTORY:new Map(),UNSUPPORTED_CLASS:new Map()};
  constructor(private readonly config:HardeningConfig,private readonly now=Date.now,private readonly observations?:AvailabilityObservations){this.quota=new ProviderQuota(config,now);}
  closeObservations(){this.observations?.close();}
+ /** Cache-only preflight for the selected leg's bounded strategic frontier. */
+ async lookupCached(request:AvailabilityRequest):Promise<unknown|undefined>{
+  const signal=availabilitySignal();signal?.throwIfAborted();
+  const key=availabilityRequestKey(request),cached=this.caches.INVENTORY.get(key);
+  if(cached&&cached.expires>this.now()&&(!cached.observation||cached.observation.observedAt<=this.now())){
+   availabilityMetric('hotCacheHits');availabilityMetric('sharedCacheHits');
+   return attachObservation(structuredClone(cached.value),cached.observation);
+  }
+  const lookup=await this.observations?.lookup(request,this.now,signal);
+  signal?.throwIfAborted();
+  if(lookup?.state!=='FRESH')return undefined;
+  return attachObservation(observationEnvelope(lookup.observation.result),{observedAt:lookup.observation.observedAt,freshUntil:lookup.freshUntil});
+ }
  execute(request:AvailabilityRequest,invoke:()=>Promise<unknown>):Promise<unknown>{
   const signal=availabilitySignal();signal?.throwIfAborted();
   const key=availabilityRequestKey(request);

@@ -1,3 +1,6 @@
+import {selectedProbeEvent,selectedProbeEvidence,selectedProbePriority,selectedFrontierAdvanced,selectedBoundedGapDetected,selectedBoundedGapPriority,selectedBoundedCandidate,selectedBoundedResult,selectedBoundedRefinement,selectedGapShrunk} from '../selected-diagnostics.js';
+import {availabilityEvidence} from '../../../providers/availability-evidence.js';
+import {rankSelectedPath,rankSelectedRecovery} from './paths.js';
 import {beginSearchTiming} from '../../../utils/search-timing.js';
 import { RailwayDatabase } from '../../../local-railway/database.js';
 import { networkFor,eventMinute } from '../../../local-railway/planner/v2/network.js';
@@ -17,7 +20,7 @@ const classRounds:TravelClass[][]=[['SL','3A'],['2A','CC','2S'],['1A','EC','3E']
 export interface DeferredRecoveryWork { requests: AvailabilityRequest[][] }
 /** Recovery never owns a provider or creates a second budget. Pass the SAME
  * AvailabilitySession used for whole-leg validation. Call sequentially per request. */
-export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean;completeMatrix?:boolean;singleClassPaths?:boolean;evidenceSearch?:{deferWholeLegWidening?:boolean;balancedFairness?:boolean;providerAllowance:number;enough:boolean}}={}):Promise<RecoveryResult>{
+export async function recoverSingleTrainLeg(database:RailwayDatabase,session:AvailabilitySession,input:RecoveryInput,options:Partial<RecoveryLimits>={},deferred?:DeferredRecoveryWork,strategy:{progressiveStations?:boolean;completeMatrix?:boolean;singleClassPaths?:boolean;evidenceSearch?:{strategicProbesFirst?:boolean;deferWholeLegWidening?:boolean;balancedFairness?:boolean;providerAllowance:number;enough:boolean}}={}):Promise<RecoveryResult>{
   const endTiming=beginSearchTiming('recovery');try{
   const limits={...defaultRecoveryLimits,...options};
   const allStations=!!(strategy.progressiveStations||strategy.completeMatrix||strategy.evidenceSearch);
@@ -72,10 +75,10 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
     if(strategy.evidenceSearch)for(const v of intervals.values())for(const c of v.checks.keys()){
       const current=session.peekKey(requestKey(request(v,c)));if(current)v.checks.set(c,current);else v.checks.delete(c);
     }
-    const available=edges(),solve=(items:IntervalEdge[])=>intervalPaths(nodes.map(s=>({code:s.stationCode,distance:s.distanceKm!})),items,limits.maxStatesPerNode,n=>{d.statesPruned+=n;truncate('pathStates');});
-    // Explicit multi-class selection may compare classes, but only ALL may
-    // combine different classes into one same-train reservation path.
-    return (strategy.evidenceSearch||strategy.singleClassPaths)&&!raw.includes('ALL')&&requested.length>1?requested.flatMap(c=>solve(available.filter(e=>e.segment.selectedClass===c))):solve(available);
+    const available=edges(),solve=(items:IntervalEdge[])=>intervalPaths(nodes.map(s=>({code:s.stationCode,distance:s.distanceKm!})),items,limits.maxStatesPerNode,n=>{d.statesPruned+=n;truncate('pathStates');},strategy.evidenceSearch?.strategicProbesFirst?rankSelectedPath:undefined);
+    // Selected checks can compose any requested classes. Legacy comparison
+    // policies retain their single-class restriction unless ALL was requested.
+    return !strategy.evidenceSearch?.strategicProbesFirst&&(strategy.evidenceSearch||strategy.singleClassPaths)&&!raw.includes('ALL')&&requested.length>1?requested.flatMap(c=>solve(available.filter(e=>e.segment.selectedClass===c))):solve(available);
   };
   const fullFound=()=>paths().some(p=>p.segments.length>0&&p.segments.every(s=>s.type==='RESERVED'));
   // Observe existing exclusions only; interval eligibility/order is unchanged.
@@ -115,20 +118,38 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
     d.progressive={stationsEligible:selected.length,stationsConsidered:considered.size,stationsRemaining:selected.length-considered.size,stationRoundsAttempted:Math.ceil(checks.length/8),complete:evidenceSearch.checkedMatrixEdges===evidenceSearch.possibleMatrixEdges&&!d.missingDistanceStopsSkipped};
   };
   if(strategy.evidenceSearch){
-    evidenceSearch=await searchEvidenceGraph({nodes:nodes.length,scopeNodes:stops.length,classes:rounds.flat(),...strategy.evidenceSearch,logicalAllowance:session.remaining,
+    evidenceSearch=await searchEvidenceGraph({nodes:nodes.length,scopeNodes:stops.length,classes:rounds.flat(),...strategy.evidenceSearch,preferredNodes:selected.map(s=>nodePosition.get(s.sequence)!),logicalAllowance:session.remaining,
+      diagnosticProbe:(e,reason,expansion)=>selectedProbeEvent(request({a:e.a,b:e.b,checks:new Map()},e.c),reason,expansion),
+      diagnosticPriority:(e,positive)=>selectedProbePriority(request({a:e.a,b:e.b,checks:new Map()},e.c),positive),
+      diagnosticFrontier:(a,b)=>selectedFrontierAdvanced(trainNumber,nodes[a].stationCode,nodes[b].stationCode),
+      diagnosticBoundedGap:()=>selectedBoundedGapDetected(),
+      diagnosticBoundedPriority:()=>selectedBoundedGapPriority(),
+      diagnosticBoundedCandidate:selectedBoundedCandidate,
+      diagnosticBoundedResult:(e,check)=>selectedBoundedResult(request({a:e.a,b:e.b,checks:new Map()},e.c),check),
+      diagnosticBoundedRefinement:selectedBoundedRefinement,
+      diagnosticGapShrink:(before,after)=>selectedGapShrunk({trainNumber,beforeFrom:nodes[before.a].stationCode,beforeTo:nodes[before.b].stationCode,afterFrom:after?nodes[after.a].stationCode:null,afterTo:after?nodes[after.b].stationCode:null,distanceBeforeKm:nodes[before.b].distanceKm!-nodes[before.a].distanceKm!,distanceAfterKm:after?nodes[after.b].distanceKm!-nodes[after.a].distanceKm!:0}),
+      unsupportedClass:c=>session.unsupported.get(trainNumber)?.has(c)===true,
+      nodeDistances:nodes.map(n=>n.distanceKm!),
       defer:resume=>{evidenceResume=resume;},
       providerUsed:()=>session.providerBudget.statistics().providerAvailabilityCalls,providerRemaining:()=>session.providerBudget.statistics().providerCallBudgetRemaining,
       remainingTime:()=>session.remainingTimeMs(),active:()=>session.assertActive(),
+      cached:async e=>{
+        const v=add(e.a,e.b)!,r=request(v,e.c),check=await session.getCached(r);
+        if(check){v.checks.set(e.c,check);checks.push({fromStation:r.fromStationCode,toStation:r.toStationCode,boardingDate:r.journeyDate,check});}
+        return check;
+      },
       known:e=>session.peekKey(requestKey(request({a:e.a,b:e.b,checks:new Map()},e.c))),
       check:async e=>{
         const v=add(e.a,e.b)!,r=request(v,e.c);
         if(!session.canAfford([r]))return undefined;
-        const check=session.peekKey(requestKey(r))??await session.get(r);v.checks.set(e.c,check);checks.push({fromStation:r.fromStationCode,toStation:r.toStationCode,boardingDate:r.journeyDate,check});
+        const cached=session.peekKey(requestKey(r));
+        if(cached)selectedProbeEvidence(availabilityEvidence(r,cached,'SEARCH_LOCAL_CACHE',false,cached.evidence));
+        const check=cached??await session.get(r);v.checks.set(e.c,check);checks.push({fromStation:r.fromStationCode,toStation:r.toStationCode,boardingDate:r.journeyDate,check});
         if(check.status==='AVAILABLE')d.intervalsAvailable++;else if(check.status==='RAC')d.intervalsRac++;else if(check.status==='WAITLIST')d.intervalsWaitlist++;else if(check.status==='PROVIDER_ERROR')d.providerErrors++;
         return check;
       },
       solve:()=>{
-        const found=paths().map(p=>({p,full:p.segments.length>0&&p.segments.every(s=>s.type==='RESERVED')})).sort((a,b)=>b.p.reserved-a.p.reserved||a.p.changes-b.p.changes);
+        const found=paths().map(p=>({p,full:p.segments.length>0&&p.segments.every(s=>s.type==='RESERVED')})).sort((a,b)=>strategy.evidenceSearch?.strategicProbesFirst?rankSelectedPath(a.p,b.p):b.p.reserved-a.p.reserved||a.p.changes-b.p.changes);
         return {full:found.filter(x=>x.full).length,partial:found.filter(x=>!x.full&&x.p.reserved>0).length,reserved:found[0]?.p.reserved??0,
           gaps:found[0]?.p.segments.filter(s=>s.type==='SELF_MANAGED').map(s=>({a:nodes.findIndex(n=>n.stationCode===s.fromStation),b:nodes.findIndex(n=>n.stationCode===s.toStation)}))??[]};
       }});
@@ -223,7 +244,7 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
     const status=full?(p.changes?'FULL_RESERVED_SPLIT_CLASS':'FULL_RESERVED_SINGLE_CLASS'):p.reserved+1e-9>=limits.minimumReservedCoverageRatio*input.distanceKm&&reserved.length?'PARTIAL_RESERVED_RECOVERY':d.truncated||d.providerErrors?'INVENTORY_CHECK_INCOMPLETE':'NO_USABLE_RECOVERY';
     return{trainNumber,requestedFrom:input.fromStation,requestedTo:input.toStation,requestedDistanceKm:input.distanceKm,recoveryStatus:status,segments:p.segments,reservedDistanceKm:p.reserved,selfManagedDistanceKm:input.distanceKm-p.reserved,reservedCoverageRatio:ratio,reservedSegmentCount:reserved.length,classChanges:p.changes,trainChanges:0,availableSegmentCount:reserved.filter(s=>s.availabilityStatus==='AVAILABLE').length,racSegmentCount:reserved.filter(s=>s.availabilityStatus==='RAC').length,waitlistChecks:d.intervalsWaitlist,totalKnownFare:p.knownFare,fareComplete:full&&reserved.length>0&&p.missingFares===0,availabilityRequestsUsed:d.availabilityRequestsUsed,cacheHits:d.availabilityCacheHits};
   };
-  const ranked=paths().map(toSolution).sort(rankRecovery),eligible=ranked.filter(p=>['FULL_RESERVED_SINGLE_CLASS','FULL_RESERVED_SPLIT_CLASS','PARTIAL_RESERVED_RECOVERY'].includes(p.recoveryStatus));
+  const ranked=paths().map(toSolution).sort(strategy.evidenceSearch?.strategicProbesFirst?rankSelectedRecovery:rankRecovery),eligible=ranked.filter(p=>['FULL_RESERVED_SINGLE_CLASS','FULL_RESERVED_SPLIT_CLASS','PARTIAL_RESERVED_RECOVERY'].includes(p.recoveryStatus));
   d.fullCoverageSolutions=eligible.filter(p=>p.recoveryStatus==='FULL_RESERVED_SINGLE_CLASS'||p.recoveryStatus==='FULL_RESERVED_SPLIT_CLASS').length;d.partialCoverageSolutions=eligible.length-d.fullCoverageSolutions;
   if(eligible.length>limits.maxResults)truncate('results');const best=ranked[0];d.bestReservedCoverageRatio=best.reservedCoverageRatio;d.bestClassChanges=best.classChanges;d.selfManagedDistanceKm=best.selfManagedDistanceKm;
   return{best,solutions:eligible.slice(0,limits.maxResults),diagnostics:{...d,...(evidenceSearch?{evidenceSearch}:{})},checks,
