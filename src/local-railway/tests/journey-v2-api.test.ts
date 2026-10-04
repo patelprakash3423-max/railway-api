@@ -126,6 +126,10 @@ test('availability HTTP response exposes composed ticket boundaries and safe nor
  assert.equal(reply.status,200);
  const s=r.results[0].legs[0].segments[0];
  assert.equal(s.reservationCount,2);assert.equal(s.reservationParts.length,2);
+ assert.equal(s.availabilityText,'Separate interval reservations; see reservationParts');
+ assert.equal(h.calls.filter(p=>p.fromStationCode==='AAA'&&p.toStationCode==='CCC').length,1);
+ assert.ok(r.diagnostics.selectedRoute.trace.some((p:any)=>p.from==='AAA'&&p.to==='CCC'&&p.status==='WAITLIST'));
+ assert.ok(!r.diagnostics.selectedRoute.trace.some((p:any)=>p.from==='AAA'&&p.to==='CCC'&&p.status==='AVAILABLE'));
  assert.deepEqual(s.reservationParts.map((p:any)=>[p.trainNumber,p.fromStation,p.toStation,p.selectedClass,p.quota,p.availabilityStatus,p.fare]),[['30001','AAA','BBB','SL','GN','AVAILABLE',100],['30001','BBB','CCC','SL','GN','AVAILABLE',100]]);
  assert.ok(s.reservationParts.every((p:any)=>p.boardingDate&&p.departureDateTime&&p.arrivalDateTime));
  assert.equal(r.diagnostics.selectedRoute.finalSearchStopReason,'FULL_COVERAGE_FOUND');

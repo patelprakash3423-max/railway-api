@@ -166,6 +166,7 @@ export async function searchSelectedEvidence(ctx:EvidenceSearchContext):Promise<
  schedule(0,last);
  detectGaps();for(const gap of [...quality.gaps].reverse())schedule(gap.a,gap.b,true);
  while(!reason){
+  if(quality.full){reason='SUFFICIENT_HIGH_QUALITY_RESULTS';break;}
   prepareBoundedFrontier();
   if(!queue.length&&!reseedBoundedGaps())break;
   ctx.active();
@@ -267,6 +268,44 @@ export async function searchSelectedEvidence(ctx:EvidenceSearchContext):Promise<
   }
  }
  quality=ctx.solve();
+ // Full coverage ends general exploration. Only exact unions of consecutive
+ // same-class tickets may bypass ALREADY_COVERED here; never infer through seats.
+ // Eight candidates total bounds cache work as well as new provider attempts.
+ const consolidationSeen=new Set<string>();
+ for(let attempts=0;quality.full&&attempts<8;attempts++){
+  const parts=quality.reservationParts;
+  if(!parts||parts.length<2)break;
+  let edge:EvidenceEdge|undefined;
+  for(let i=0;i<parts.length-1&&!edge;i++){
+   let end=i;
+   while(end+1<parts.length&&parts[end].b===parts[end+1].a&&parts[i].c===parts[end+1].c)end++;
+   // Try the largest union first, then the adjacent pair. Re-solving after a
+   // successful merge exposes further unions without an all-pairs matrix.
+   for(const j of [end,i+1]){
+    if(j>end||j===i)continue;
+    const candidate={a:parts[i].a,b:parts[j].b,c:parts[i].c};
+    if(!consolidationSeen.has(edgeKey(candidate))){edge=candidate;break;}
+   }
+  }
+  if(!edge)break;
+  consolidationSeen.add(edgeKey(edge));ctx.active();
+  if(ctx.remainingTime()<=0){reason='DEADLINE';break;}
+  let hit=await ctx.cached?.(edge)??ctx.known(edge);
+  if(!hit){
+   if(unsupported.has(edge.c)||ctx.unsupportedClass?.(edge.c))continue;
+   if(checks>=ctx.logicalAllowance){reason='LOGICAL_SAFETY_LIMIT';break;}
+   if(ctx.providerRemaining()<=0){reason='PROVIDER_BUDGET_EXHAUSTED';break;}
+   if(ctx.providerUsed()-started>=ctx.providerAllowance){reason='FAIRNESS_RESERVE';break;}
+   ctx.diagnosticProbe?.(edge,'TICKET_CONSOLIDATION',true);
+   hit=await ctx.check(edge);checks++;
+  }
+  if(!hit){reason=ctx.providerRemaining()<=0?'PROVIDER_BUDGET_EXHAUSTED':'LOGICAL_SAFETY_LIMIT';break;}
+  remember(edge,hit);
+  if(['AVAILABLE','RAC','WAITLIST','UNAVAILABLE'].includes(hit.status))valid.add(edgeKey(edge));
+  if(hit.errorCategory==='RATE_LIMITED'){reason='PROVIDER_RATE_LIMIT';break;}
+  if(hit.errorCategory==='PROVIDER_BUDGET_EXHAUSTED'){reason='PROVIDER_BUDGET_EXHAUSTED';break;}
+  quality=ctx.solve();
+ }
  selectedBoundedBreadth({boundedUniquePairsFreshlyCovered:[...boundedPairs.values()].filter(pairFresh).length,
   boundedAdjacentPairsTotal:adjacentPairs.size,boundedAdjacentPairsFreshlyCovered:[...adjacentPairs.values()].filter(pairFresh).length,
   boundedAdjacentPriorityProbes:adjacentPriorityProbes,boundedClassDepthProbes:classDepthProbes});

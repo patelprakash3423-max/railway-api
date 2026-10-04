@@ -200,10 +200,10 @@ test('fresh Vaishali prefixes prioritize verified 3E frontier extensions and str
  for(const c of h.input.classes)h.seed('SV','NDLS',c,'WAITLIST');
  h.seed('SV','GKP','2A');h.seed('GKP','KLD','3E');h.seed('KLD','BST','3E');h.seed('BST','GD','3E');
  const r=await h.check(),d=r.diagnostics!.selectedRoute!;
- assert.deepEqual(h.calls.map(p=>[p.fromStationCode,p.toStationCode,p.travelClass]),[
+ assert.deepEqual(h.calls.slice(0,5).map(p=>[p.fromStationCode,p.toStationCode,p.travelClass]),[
   ['GD','NDLS','3E'],['GD','LKO','3E'],['LKO','NDLS','3E'],['LKO','CNB','3E'],['CNB','NDLS','3E']
  ]);
- assert.equal(r.results[0].reservedCoverageRatio,1);assert.equal(d.newProviderCallsUsed,5);
+ assert.equal(r.results[0].reservedCoverageRatio,1);assert.equal(d.newProviderCallsUsed,12);
  assert.ok(d.persistedObservationHits>=12);assert.equal(d.configuredSelectedRouteProviderCallLimit,40);
  assert.ok(d.positiveClassEvidenceProbes>=5);assert.ok(d.frontierPriorityProbes>=5);
  assert.ok(d.frontierAdvancements.some(f=>f.before==='GD'&&f.after==='LKO'));
@@ -263,7 +263,7 @@ function boundedFixture(t:TestContext,rule:Rule=()=> 'WAITLIST',limit?:number,us
 test('bounded GD-TDL closes after adjacent breadth with one direct AVAILABLE probe',async t=>{
  const h=boundedFixture(t,r=>r.fromStationCode==='GD'&&r.toStationCode==='TDL'?'AVAILABLE':'WAITLIST');
  const r=await h.check(),d=r.diagnostics!.selectedRoute!;
- assert.equal(h.calls.length,5);assert.deepEqual([h.calls[4].fromStationCode,h.calls[4].toStationCode],['GD','TDL']);
+ assert.equal(h.calls.length,6);assert.deepEqual([h.calls[4].fromStationCode,h.calls[4].toStationCode],['GD','TDL']);
  assert.equal(r.results[0].reservedCoverageRatio,1);assert.equal(d.boundedGapsDetected,1);assert.equal(d.boundedGapPriorityProbes,5);
  assert.deepEqual(d.gapShrinkEvents,[{trainNumber:'15565',beforeFrom:'GD',beforeTo:'TDL',afterFrom:null,afterTo:null,distanceBeforeKm:429,distanceAfterKm:0}]);
  assert.equal(d.finalSearchStopReason,'FULL_COVERAGE_FOUND');assert.deepEqual(d.uncoveredRanges,[]);
@@ -279,15 +279,15 @@ test('bounded gaps use boundary-specific classes and progressively shrink from b
  const h=boundedFixture(t,r=>r.fromStationCode==='GD'&&r.toStationCode==='Y'&&r.travelClass==='3E'||r.fromStationCode==='Z'&&r.toStationCode==='TDL'&&r.travelClass==='3A'||r.fromStationCode==='Y'&&r.toStationCode==='Z'&&r.travelClass==='3E'?'AVAILABLE':'WAITLIST');
  const r=await h.check(),d=r.diagnostics!.selectedRoute!;
  assert.equal(r.results[0].reservedCoverageRatio,1);
- assert.ok(h.calls.length<=9,JSON.stringify(h.calls));
+ assert.equal(h.calls.length,11);
  const left=h.calls.findIndex(p=>p.fromStationCode==='GD'&&p.toStationCode==='Y');
  assert.ok(left>=0);assert.equal(h.calls[left].travelClass,'3E');
  const right=h.calls.findIndex(p=>p.fromStationCode==='Z'&&p.toStationCode==='TDL');
  assert.ok(right>=0);assert.equal(h.calls[right].travelClass,'3A');
  assert.ok(d.gapShrinkEvents.length>=2);
  assert.equal(d.gapShrinkEvents.at(-1)?.afterFrom,null);
- assert.equal(d.boundedGapPriorityProbes,h.calls.length);
- assert.ok(h.calls.every(p=>['GD','X','Y','Z'].includes(p.fromStationCode)&&['X','Y','Z','TDL'].includes(p.toStationCode)));
+ assert.equal(d.boundedGapPriorityProbes,7);
+ assert.ok(h.calls.slice(0,7).every(p=>['GD','X','Y','Z'].includes(p.fromStationCode)&&['X','Y','Z','TDL'].includes(p.toStationCode)));
 });
 
 test('right-boundary 3A evidence can shrink a bounded gap before left-boundary progress',async t=>{
@@ -311,10 +311,10 @@ test('WAITLIST leaves the bounded gap unknown, preserves both islands, and never
 
 test('cold persisted and Redis gap evidence closes the route for free',async t=>{
  const h=boundedFixture(t,r=>r.fromStationCode==='GD'&&r.toStationCode==='TDL'?'AVAILABLE':'WAITLIST',undefined,true);
- const first=await h.check();assert.equal(first.diagnostics!.selectedRoute!.newProviderCallsUsed,5);
- const second=await h.check(h.create());assert.equal(h.calls.length,5);assert.equal(second.diagnostics!.selectedRoute!.newProviderCallsUsed,0);
+ const first=await h.check();assert.equal(first.diagnostics!.selectedRoute!.newProviderCallsUsed,6);
+ const second=await h.check(h.create());assert.equal(h.calls.length,6);assert.equal(second.diagnostics!.selectedRoute!.newProviderCallsUsed,0);
  assert.equal(second.results[0].reservedCoverageRatio,1);assert.ok(second.diagnostics!.redisCacheHits>0);
- const sqlite=boundedFixture(t);sqlite.seed('GD','TDL','3E');
+ const sqlite=boundedFixture(t);sqlite.seed('GD','TDL','3E');sqlite.seed('SV','TDL','3E','WAITLIST');
  const cached=await sqlite.check();assert.equal(sqlite.calls.length,0);assert.equal(cached.results[0].reservedCoverageRatio,1);assert.ok(cached.diagnostics!.persistentCacheHits>0);
 });
 
@@ -533,4 +533,71 @@ test('adjacent-first rehydrates newly exposed boundaries after a gap shrinks',as
  assert.ok(lookups.some(e=>e.a===5&&e.b===8&&e.c==='3A'));
  assert.ok(!calls.some(e=>e.a===5&&e.b===8),'persisted AVAILABLE on a new boundary must be consumed before a live probe');
  assert.deepEqual(solve().gaps,[{a:8,b:9}]);
+});
+
+for(const available of [true,false])test(`ticket consolidation preserves full coverage (merge available=${available})`,async()=>{
+ const known=new Map<string,import('../../journey/availability/types.js').InventoryCheck>();
+ const key=(e:{a:number;b:number;c:string})=>`${e.a}:${e.b}:${e.c}`;
+ const direct={travelClass:'3A' as const,status:'WAITLIST' as const};known.set('0:3:3A',direct);
+ const calls:string[]=[];
+ const d=await searchSelectedEvidence({nodes:4,classes:['3A'],providerAllowance:4,logicalAllowance:4,enough:false,
+  providerUsed:()=>calls.length,providerRemaining:()=>4-calls.length,remainingTime:()=>10000,active:()=>{},known:e=>known.get(key(e)),
+  solve:()=>({full:1,partial:0,reserved:300,gaps:[],reservationParts:known.get('0:2:3A')?.status==='AVAILABLE'?[{a:0,b:2,c:'3A'},{a:2,b:3,c:'3A'}]:[{a:0,b:1,c:'3A'},{a:1,b:2,c:'3A'},{a:2,b:3,c:'3A'}]}),
+  check:async e=>{calls.push(key(e));const hit={travelClass:e.c,status:e.a===0&&e.b===2&&available?'AVAILABLE' as const:'WAITLIST' as const};known.set(key(e),hit);return hit;}});
+ assert.ok(calls.includes('0:2:3A'));assert.ok(!calls.includes('0:3:3A'));
+ assert.equal(known.get('0:3:3A'),direct);assert.equal(d.fullPathsFound,1);
+ assert.equal(known.get('0:2:3A')?.status,available?'AVAILABLE':'WAITLIST');
+});
+
+for(const cached of [false,true])test(`ticket consolidation respects exhausted allowance and reads cache first (cached=${cached})`,async()=>{
+ let merged=false,calls=0,lookups=0;
+ const d=await searchSelectedEvidence({nodes:4,classes:['3A'],providerAllowance:0,logicalAllowance:0,enough:false,
+  providerUsed:()=>0,providerRemaining:()=>0,remainingTime:()=>10000,active:()=>{},known:()=>undefined,
+  cached:async e=>{lookups++;if(cached&&e.a===0&&e.b===3){merged=true;return {travelClass:'3A',status:'AVAILABLE'};}return undefined;},
+  solve:()=>({full:1,partial:0,reserved:300,gaps:[],reservationParts:merged?[{a:0,b:3,c:'3A'}]:[{a:0,b:1,c:'3A'},{a:1,b:2,c:'3A'},{a:2,b:3,c:'3A'}]}),
+  check:async()=>{calls++;throw Error('Budget must prevent provider calls');}});
+ assert.equal(calls,0);assert.equal(lookups,1);assert.equal(merged,cached);assert.equal(d.fullPathsFound,1);
+});
+
+for(const merge of ['AVAILABLE','WAITLIST'] as const)test(`selected same-class persisted tickets consolidate to ${merge==='AVAILABLE'?2:3} reservations`,async t=>{
+ const h=fixture(t,r=>r.fromStationCode==='NDLS'&&r.toStationCode==='ASH'?merge:'WAITLIST',['NDLS','CNB','ASH','SV']);h.input.classes=['3A'];
+ h.seed('NDLS','SV','3A','WAITLIST');
+ for(const [a,b]of [['NDLS','CNB'],['CNB','ASH'],['ASH','SV']])h.seed(a,b,'3A');
+ const r=await h.check(),s=r.results[0].legs[0].segments[0];assert.equal(s.type,'RESERVED');
+ if(s.type==='RESERVED'){
+  assert.equal(s.reservationCount,merge==='AVAILABLE'?2:3);
+  assert.equal(s.availabilityText,'Separate interval reservations; see reservationParts');
+  assert.deepEqual(s.reservationParts?.map(p=>[p.fromStation,p.toStation]),merge==='AVAILABLE'?[['NDLS','ASH'],['ASH','SV']]:[['NDLS','CNB'],['CNB','ASH'],['ASH','SV']]);
+ }
+ assert.equal(r.results[0].reservedCoverageRatio,1);assert.ok(!h.calls.some(p=>p.fromStationCode==='NDLS'&&p.toStationCode==='SV'));
+ const before=h.calls.length;await h.check(h.create());assert.equal(h.calls.length,before);
+});
+
+test('ticket consolidation stops after eight candidates and never crosses class boundaries',async()=>{
+ for(const mixed of [false,true]){
+  let calls=0;
+  await searchSelectedEvidence({nodes:20,classes:['3A','SL'],providerAllowance:100,logicalAllowance:100,enough:false,
+   providerUsed:()=>calls,providerRemaining:()=>100-calls,remainingTime:()=>10000,active:()=>{},known:()=>undefined,
+   solve:()=>({full:1,partial:0,reserved:1900,gaps:[],reservationParts:Array.from({length:19},(_,i)=>({a:i,b:i+1,c:mixed&&i%2?'SL' as const:'3A' as const}))}),
+   check:async e=>{calls++;return {travelClass:e.c,status:'WAITLIST'};}});
+  assert.equal(calls,mixed?0:8);
+ }
+});
+
+test('ticket consolidation uses the selected provider allowance and preserves full fallback',async t=>{
+ const h=fixture(t,()=> 'WAITLIST',['NDLS','CNB','ASH','SV'],1);h.input.classes=['3A'];
+ h.seed('NDLS','SV','3A','WAITLIST');
+ for(const [a,b]of [['NDLS','CNB'],['CNB','ASH'],['ASH','SV']])h.seed(a,b,'3A');
+ const r=await h.check();assert.equal(h.calls.length,1);assert.equal(r.diagnostics!.providerAvailabilityCalls,1);
+ assert.equal(r.results[0].reservedCoverageRatio,1);
+ const s=r.results[0].legs[0].segments[0];assert.equal(s.type,'RESERVED');if(s.type==='RESERVED')assert.equal(s.reservationCount,3);
+});
+
+test('one exact reservation never starts ticket consolidation',async()=>{
+ let calls=0,lookups=0;
+ await searchSelectedEvidence({nodes:4,classes:['3A'],providerAllowance:10,logicalAllowance:10,enough:false,
+  providerUsed:()=>calls,providerRemaining:()=>10-calls,remainingTime:()=>10000,active:()=>{},known:()=>undefined,
+  cached:async()=>{lookups++;return undefined;},check:async()=>{calls++;throw Error('No probe needed');},
+  solve:()=>({full:1,partial:0,reserved:300,gaps:[],reservationParts:[{a:0,b:3,c:'3A'}]})});
+ assert.equal(calls,0);assert.equal(lookups,0);
 });

@@ -46,7 +46,7 @@ export interface EvidenceSearchContext {
  providerUsed:()=>number;providerRemaining:()=>number;remainingTime:()=>number;active:()=>void;
  known:(edge:EvidenceEdge)=>InventoryCheck|undefined;
  check:(edge:EvidenceEdge)=>Promise<InventoryCheck|undefined>;
- solve:()=>{full:number;partial:number;reserved:number;gaps:{a:number;b:number}[]};
+ solve:()=>{full:number;partial:number;reserved:number;gaps:{a:number;b:number}[];reservationParts?:EvidenceEdge[]};
  defer?:(resume:EvidenceRevisit)=>void;
 }
 export const matrixCost=(nodes:number,classes:number)=>classes*nodes*(nodes-1)/2;

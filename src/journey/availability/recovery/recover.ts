@@ -151,6 +151,7 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
       solve:()=>{
         const found=paths().map(p=>({p,full:p.segments.length>0&&p.segments.every(s=>s.type==='RESERVED')})).sort((a,b)=>strategy.evidenceSearch?.strategicProbesFirst?rankSelectedPath(a.p,b.p):b.p.reserved-a.p.reserved||a.p.changes-b.p.changes);
         return {full:found.filter(x=>x.full).length,partial:found.filter(x=>!x.full&&x.p.reserved>0).length,reserved:found[0]?.p.reserved??0,
+          reservationParts:found[0]?.full?found[0].p.segments.flatMap(s=>s.type==='RESERVED'?s.reservationParts.map(p=>({a:nodes.findIndex(n=>n.stationCode===p.fromStation),b:nodes.findIndex(n=>n.stationCode===p.toStation),c:s.selectedClass})):[]):undefined,
           gaps:found[0]?.p.segments.filter(s=>s.type==='SELF_MANAGED').map(s=>({a:nodes.findIndex(n=>n.stationCode===s.fromStation),b:nodes.findIndex(n=>n.stationCode===s.toStation)}))??[]};
       }});
     refreshEvidence();
