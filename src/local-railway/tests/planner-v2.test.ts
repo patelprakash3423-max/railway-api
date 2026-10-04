@@ -11,6 +11,7 @@ import { LocalJourneyPlannerV2, stateDominates, type SearchState } from '../plan
 import { deriveMaxChanges, type V2Journey, type V2Limits } from '../planner/v2/types.js';
 import { networkFor, lowerBounds, routeSql } from '../planner/v2/network.js';
 import { candidateDominates, diversify, rankV2 } from '../planner/v2/ranking.js';
+import {JourneyV2ApiService} from '../../api/services/journey-v2-service.js';
 const request = { from: 'AAA', to: 'ZZZ', date: '18-09-2026' };
 interface Service { number?: string; codes: string[]; times: number[]; distances: (number | undefined)[]; days?: Weekday[]; dwell?: number }
 const service = (codes: string[], times: number[], distances: number[]): Service => ({ codes, times, distances });
@@ -30,6 +31,17 @@ function fixture(t: TestContext, services: Service[]): RailwayDatabase {
   const db = new RailwayDatabase(':memory:'); db.replace(data); t.after(() => db.close()); return db;
 }
 const direct = (distance = 1000, duration = 1000) => service(['AAA','ZZZ'], [360, 360 + duration], [0, distance]);
+for(const count of [45,80])test(`V2 discovery returns at most 70 of ${count} valid routes without provider calls`,async t=>{
+ const db=fixture(t,Array.from({length:count},(_,i)=>service(['AAA','ZZZ'],[360+i,1360+i],[0,1000+i])));
+ const planned=new LocalJourneyPlannerV2(db).search(request);
+ assert.equal(planned.journeys.length,Math.min(count,70));
+ let calls=0;
+ const api=new JourneyV2ApiService(db,{getAvailability:async()=>{calls++;throw Error('Discovery must stay offline');}});
+ const result=await api.search({...request,classes:['SL']});
+ assert.equal(result.results.length,Math.min(count,70));assert.equal(calls,0);
+ assert.ok(result.results.every(j=>j.status==='NOT_CHECKED'));
+ assert.deepEqual(result.results.map(j=>j.totalDistanceKm),Array.from({length:Math.min(count,70)},(_,i)=>1000+i));
+});
 function search(t: TestContext, services: Service[], limits: Partial<V2Limits> = {}) { return new LocalJourneyPlannerV2(fixture(t, services), limits).search(request); }
 function chain(legs: number, distance: number, duration = 150): Service[] {
   return Array.from({ length: legs }, (_, i) => service([i ? `X${i}` : 'AAA', i === legs - 1 ? 'ZZZ' : `X${i + 1}`], [420 + i * (duration + 30), 420 + i * (duration + 30) + duration], [0, distance / legs]));
@@ -37,7 +49,7 @@ function chain(legs: number, distance: number, duration = 150): Service[] {
 for (const [distance, expected] of [[500,1],[1000,3],[1500,5],[2000,5]]) test(`V2 max changes ${distance}km`, () => assert.equal(deriveMaxChanges(distance), expected));
 test('V2 direct baseline and explicit future inventory leg fields', t => {
   const r = search(t, [direct()]); assert.equal(r.journeys.length,1); assert.equal(r.diagnostics.baselineSource,'DIRECT');
-  assert.equal(r.diagnostics.maxDistanceKm,1500); assert.equal(r.diagnostics.maxDurationMinutes,1500);
+  assert.equal(r.diagnostics.maxDistanceKm,1700); assert.equal(r.diagnostics.maxDurationMinutes,1500);
   const leg=r.journeys[0].segments[0];assert.equal(leg.fromStation,'AAA');assert.equal(leg.toStation,'ZZZ');assert.equal(leg.boardingDateTime,leg.departureDateTime);assert.equal(leg.distanceKm,1000);
 });
 for (const legs of [2,4,6]) test(`V2 ${legs-1}-change schedule found`, t => {
@@ -46,13 +58,13 @@ for (const legs of [2,4,6]) test(`V2 ${legs-1}-change schedule found`, t => {
 });
 test('V2 fallback baseline without direct service', t => { const r=search(t,chain(2,600));assert.equal(r.diagnostics.baselineSource,'BOUNDED_PATH');assert.equal(r.journeys[0].changes,1);assert.equal(r.diagnostics.baselineDistanceKm,600); });
 test('V2 both hard detour bounds include equality and reject excess', t => {
-  const r=search(t,[direct(),service(['AAA','ZZZ'],[400,1900],[0,1500]),service(['AAA','ZZZ'],[410,1410],[0,1501]),service(['AAA','ZZZ'],[420,1921],[0,1000])]);
-  assert.equal(r.journeys.length,2); assert.ok(r.journeys.some(j=>j.totalDistanceKm===1500&&j.durationMinutes===1500));
-  assert.ok(r.journeys.every(j=>j.totalDistanceKm<=1500&&j.durationMinutes<=1500));
+  const r=search(t,[direct(),service(['AAA','ZZZ'],[400,1900],[0,1700]),service(['AAA','ZZZ'],[410,1410],[0,1701]),service(['AAA','ZZZ'],[420,1921],[0,1000])]);
+  assert.equal(r.journeys.length,2); assert.ok(r.journeys.some(j=>j.totalDistanceKm===1700&&j.durationMinutes===1500));
+  assert.ok(r.journeys.every(j=>j.totalDistanceKm<=1700&&j.durationMinutes<=1500));
 });
-for (const transfer of [29,30,360,361]) test(`V2 transfer ${transfer} minutes`, t => {
+for (const transfer of [29,30,479,480,481]) test(`V2 transfer ${transfer} minutes`, t => {
   const r=search(t,[direct(),service(['AAA','XXX'],[400,600],[0,500]),service(['XXX','ZZZ'],[600+transfer,800+transfer],[0,500])]);
-  assert.equal(r.journeys.some(j=>j.changes===1),transfer>=30&&transfer<=360);
+  assert.equal(r.journeys.some(j=>j.changes===1),transfer>=30&&transfer<=480);
 });
 test('V2 unknown candidate distance is rejected, relaxed distance stays optimistic', t => {
   const broken=service(['AAA','ZZZ'],[400,900],[0,1000]);broken.distances[1]=undefined;
@@ -88,7 +100,7 @@ test('V2 major backward movement is pruned even inside detour bounds',t=>{
   const r=search(t,[direct(),service(['AAA','XXX'],[400,500],[0,100]),service(['XXX','ZZZ'],[540,1340],[0,1300])]);assert.ok(r.diagnostics.statesBackwardPruned>0);assert.ok(r.journeys.every(j=>j.changes===0));
 });
 test('V2 optimistic lower bounds prune impossible remaining distance',t=>{
-  const r=search(t,[direct(),service(['AAA','XXX'],[400,500],[0,800]),service(['XXX','ZZZ'],[540,800],[0,800])]);assert.ok(r.diagnostics.statesLowerBoundPruned>0);assert.equal(r.journeys.length,1);
+  const r=search(t,[direct(),service(['AAA','XXX'],[400,500],[0,900]),service(['XXX','ZZZ'],[540,800],[0,900])]);assert.ok(r.diagnostics.statesLowerBoundPruned>0);assert.equal(r.journeys.length,1);
 });
 test('V2 dominance preserves distinct finite transfer windows and resources',()=>{
   const a:SearchState={station:'XXX',arrival:500,departure:100,distance:200,legs:[],connections:[],used:new Set(['1']),visited:new Set(['AAA','XXX']),tiers:[]};

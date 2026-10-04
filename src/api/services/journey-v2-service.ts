@@ -6,6 +6,7 @@ import {hardeningConfig} from '../../config/hardening.js';
 import {deepJourneySearchPolicy} from '../../journey/availability/journey/search-policy.js';
 import {createHash} from 'node:crypto';
 import {LocalJourneyPlannerV2} from '../../local-railway/planner/v2/planner.js';
+import {defaultV2Limits} from '../../local-railway/planner/v2/types.js';
 import type {V2Journey} from '../../local-railway/planner/v2/types.js';
 import {withAvailabilityEvidenceLogger} from '../../providers/availability-evidence.js';
 import {ProviderConfigurationError} from '../../application/errors.js';
@@ -74,7 +75,7 @@ export class JourneyV2ApiService {
    const search=validateJourneyV2Request(input);
    if(!this.database.station(search.from)||!this.database.station(search.to))throw new PublicError('INVALID_STATION','Station code is not present in the local railway dataset.');
    const planner=new LocalJourneyPlannerV2(this.database,{},true).search({from:search.from,to:search.to,date:search.date});
-   const {results,presentation}=presentJourneys(planner.journeys.map((j):JourneyV2Result=>({
+   const {results,presentation}=presentJourneys(planner.journeys.slice(0,defaultV2Limits.maxResults).map((j):JourneyV2Result=>({
     id:routeId(j),status:'NOT_CHECKED',from:j.from,to:j.to,departureDateTime:j.departureDateTime,arrivalDateTime:j.arrivalDateTime,totalDurationMinutes:j.durationMinutes,totalDistanceKm:j.totalDistanceKm,trainChanges:j.changes,classChanges:0,reservedCoverageRatio:0,unknownDistanceKm:j.totalDistanceKm,
     totalFare:{status:'UNKNOWN',amount:null,currency:'INR'},connections:j.connections.map(c=>({station:c.station,waitMinutes:c.minutes,safety:c.safety})),
     legs:j.segments.map(l=>({trainNumber:l.trainNumber,trainName:l.trainName,scheduledFrom:l.fromStation,scheduledTo:l.toStation,departureDateTime:l.departureDateTime,arrivalDateTime:l.arrivalDateTime,distanceKm:l.distanceKm,recoveryStatus:'NOT_CHECKED',unknownDistanceKm:l.distanceKm,segments:[]}))

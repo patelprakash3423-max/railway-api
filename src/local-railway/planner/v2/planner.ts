@@ -11,7 +11,7 @@ import { defaultV2Limits, deriveMaxChanges, type V2Diagnostics, type V2Journey, 
 import {memoryPhase} from '../../../utils/search-memory.js';
 export interface SearchState { station: string; arrival: number; departure?: number; distance: number; legs: V2Leg[]; connections: V2Journey['connections']; used: Set<string>; visited: Set<string>; tiers: StationTier[] }
 const subset = (a: Set<string>, b: Set<string>) => [...a].every(x => b.has(x));
-/** Equal absolute arrival preserves the entire [30,360] transfer window. Resource
+/** Equal absolute arrival preserves the entire [30,480] transfer window. Resource
  * subsets preserve future legal choices; earlier arrival alone is NOT safe. */
 export function stateDominates(a: SearchState, b: SearchState): boolean {
   return a.station === b.station && a.arrival === b.arrival && a.departure !== undefined && b.departure !== undefined && a.departure >= b.departure && a.legs.length <= b.legs.length && a.distance <= b.distance && subset(a.used, b.used) && subset(a.visited, b.visited) && (a.departure > b.departure || a.legs.length < b.legs.length || a.distance < b.distance || a.used.size < b.used.size || a.visited.size < b.visited.size);
@@ -38,7 +38,7 @@ export class LocalJourneyPlannerV2 {
     const d: V2Diagnostics = { baselineDistanceKm: null, baselineDurationMinutes: null, baselineSource: 'NONE', maxDistanceKm: null, maxDurationMinutes: null, derivedMaxChanges: 0, stagesAttempted: ['DIRECT'], stationTierCounts: { MAJOR: 0, MEDIUM: 0, SMALL: 0 }, statesGenerated: 0, statesExpanded: 0, baselineStatesExpanded: 0, statesDominated: 0, statesTimingPruned: 0, statesDistancePruned: 0, statesDurationPruned: 0, statesLoopPruned: 0, statesCalendarPruned: 0, statesBackwardPruned: 0, statesLowerBoundPruned: 0, statesUnknownDistancePruned: 0, completeCandidatesGenerated: 0, candidatesAfterDetourBounds: 0, candidatesAfterDominance: 0, candidatesAfterDiversity: 0, maxFrontierSize: 0, truncated: false, truncationReasons: [], queryDurationMs: 0 };
     for (const m of net.metrics.values()) d.stationTierCounts[m.tier]++;
     const truncate = (reason: string) => { d.truncated = true; if (!d.truncationReasons.includes(reason)) d.truncationReasons.push(reason); };
-    const timing = connectionTimes({ minimumConnectionMinutes: 30 });
+    const timing = connectionTimes({ minimumConnectionMinutes: 30, maximumConnectionMinutes: 480 });
     const initial: SearchState = { station: from, arrival: day, distance: 0, legs: [], connections: [], used: new Set(), visited: new Set([from]), tiers: [] };
     let maxDistance = Infinity, maxDuration = Infinity;
     const elapsed = (s: SearchState) => s.departure === undefined ? 0 : s.arrival - s.departure;
@@ -149,7 +149,7 @@ export class LocalJourneyPlannerV2 {
     }
     if (baseline) {
       d.baselineDistanceKm = baseline.totalDistanceKm; d.baselineDurationMinutes = baseline.durationMinutes;
-      maxDistance = d.maxDistanceKm = baseline.totalDistanceKm * 1.5; maxDuration = d.maxDurationMinutes = baseline.durationMinutes * 1.5;
+      maxDistance = d.maxDistanceKm = baseline.totalDistanceKm * 1.7; maxDuration = d.maxDurationMinutes = baseline.durationMinutes * 1.5;
       d.derivedMaxChanges = deriveMaxChanges(baseline.totalDistanceKm);
       const changes = Math.min(input.maxChanges ?? 5, d.derivedMaxChanges);
       for (const j of [...direct, baseline].sort(rankV2)) if (j.totalDistanceKm <= maxDistance && j.durationMinutes <= maxDuration && j.changes <= changes) {
