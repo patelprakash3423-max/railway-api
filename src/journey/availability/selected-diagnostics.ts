@@ -23,6 +23,7 @@ export interface BoundedBreadthDiagnostics {
  boundedAdjacentPriorityProbes:number;boundedClassDepthProbes:number;
 }
 export class SelectedAvailabilityTrace {
+ readonly fallback={normalScopeExhaustions:0,complementaryFallbackAttempts:0,negativeRefreshAttempts:0,negativeRefreshTooRecent:0,fallbackProviderCandidates:0,fullCoverageAfterFallback:0};
  // Coverage at search stop over unique pairs in gaps encountered by each leg;
  // probe counters exclude session-known reuse and include gateway cache hits.
  readonly boundedBreadth:BoundedBreadthDiagnostics={boundedUniquePairsFreshlyCovered:0,boundedAdjacentPairsTotal:0,boundedAdjacentPairsFreshlyCovered:0,boundedAdjacentPriorityProbes:0,boundedClassDepthProbes:0};
@@ -94,6 +95,7 @@ const current=new AsyncLocalStorage<SelectedAvailabilityTrace>();
 export const withSelectedAvailabilityTrace=<T>(trace:SelectedAvailabilityTrace,work:()=>Promise<T>)=>current.run(trace,work);
 export const selectedProbeEvent=(request:AvailabilityRequest,reason:string,expansion=false)=>current.getStore()?.event(request,reason,expansion);
 export const selectedSearchStopped=(reason:string)=>{const trace=current.getStore();if(trace&&trace.searchStopReasons.length<32)trace.searchStopReasons.push(reason);};
+export const selectedFallbackEvent=(event:keyof SelectedAvailabilityTrace['fallback'])=>{const trace=current.getStore();if(trace)trace.fallback[event]++;};
 export const selectedProbePriority=(request:AvailabilityRequest,positiveClassEvidence:boolean)=>current.getStore()?.priority(request,positiveClassEvidence);
 export const selectedFrontierAdvanced=(trainNumber:string,before:string,after:string)=>current.getStore()?.frontier(trainNumber,before,after);
 export const selectedBoundedGapDetected=()=>{const trace=current.getStore();if(trace)trace.boundedGapsDetected++;};
@@ -124,6 +126,7 @@ export function finishSelectedDiagnostics(trace:SelectedAvailabilityTrace,select
   return ranges.map(g=>({...g,distanceKm:ranges.length===1?missing:undefined}));
  }));
  return {configuredSelectedRouteProviderCallLimit:selectedLimit,configuredGlobalProviderCallLimit:globalLimit,effectiveProviderCallLimit:Math.min(selectedLimit,globalLimit),newProviderCallsUsed:d.providerAvailabilityCalls,
+  ...trace.fallback,
   cacheHits:trace.cacheHits,persistedObservationHits:trace.persistedObservationHits,freshObservationHits:trace.freshObservationHits,duplicateProbesAvoided:trace.duplicateProbesAvoided,totalProbesConsidered:trace.totalProbesConsidered,totalProbesExecuted:trace.totalProbesExecuted,probesSkipped:trace.probesSkipped,
   budgetRemaining:d.providerCallBudgetRemaining,selectedRouteBudgetRemaining:Math.max(0,selectedLimit-d.providerAvailabilityCalls),globalProviderQuotaBlocked,selectedRouteBudgetBlocked,finalSearchStopReason,underlyingStopReasons:stops,orchestratorStopReason:d.stopReason,
   unsupportedClassProbesAvoided:trace.probesSkipped.UNSUPPORTED_TRAIN_CLASS??0,frontierPriorityProbes:trace.frontierPriorityProbes,positiveClassEvidenceProbes:trace.positiveClassEvidenceProbes,frontierAdvancements:trace.frontierAdvancements,frontierEntriesDropped:trace.frontierEntriesDropped,

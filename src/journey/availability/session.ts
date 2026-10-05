@@ -1,7 +1,7 @@
 import {selectedProbeEvidence,selectedProbeEvent} from './selected-diagnostics.js';
 import {timeSearchAsync} from '../../utils/search-timing.js';
 import {AvailabilityProviderBudget,withAvailabilityProviderBudget,invokeAvailabilityProvider,type ProviderCallDiagnostics} from '../../providers/availability-provider-budget.js';
-import {availabilityEvidence,emitAvailabilityEvidence,observeProviderIdentity,type AvailabilityEvidenceSource,type ProviderIdentityEvidence} from '../../providers/availability-evidence.js';
+import {availabilityEvidence,emitAvailabilityEvidence,observeProviderIdentity,withNegativeAvailabilityRefresh,type AvailabilityEvidenceSource,type ProviderIdentityEvidence} from '../../providers/availability-evidence.js';
 import {ProviderConfigurationError} from '../../application/errors.js';
 import {emptyAvailabilityMetrics,observeAvailabilitySdk,observeAvailabilityMetrics,type AvailabilityMetrics} from '../../providers/availability-observation.js';
 import type { AvailabilityRequest } from '../../domain/types/availability.js';
@@ -13,6 +13,21 @@ export type SessionStatistics = Pick<AvailabilityDiagnostics,'availabilityBudget
 /** One user request, shared by whole-leg validation and subsequent recovery.
  * Callers serialize atomic groups; exact concurrent requests are also deduplicated. */
 export class AvailabilitySession {
+  private selectedFallbackCalls=0;
+  private readonly refreshedNegativeKeys=new Set<string>();
+  get currentTimeMs(){return this.now();}
+  claimSelectedFallback():boolean{
+    // Shared by every selected leg in this session; independent of live budget.
+    if(this.selectedFallbackCalls>=8)return false;
+    this.selectedFallbackCalls++;return true;
+  }
+  async refreshNegative(request:AvailabilityRequest,minimumAgeMs:number):Promise<InventoryCheck|undefined>{
+    const key=requestKey(request),hit=this.peekKey(key),observedAt=hit?.rawDetails?.observation?.observedAt;
+    if(this.refreshedNegativeKeys.has(key))return this.pending.get(key)??hit;
+    if(!hit||!['WAITLIST','UNAVAILABLE'].includes(hit.status)||observedAt===undefined||this.now()-observedAt<minimumAgeMs||this.unsupported.get(request.trainNumber)?.has(request.travelClass as TravelClass))return hit;
+    this.refreshedNegativeKeys.add(key);
+    return withNegativeAvailabilityRefresh(request,minimumAgeMs,()=>this.getCheck(request,true));
+  }
   readonly budget: SearchBudget;
   readonly unsupported = new Map<string, Set<TravelClass>>();
   private readonly cache = new Map<string, InventoryCheck>();
@@ -75,11 +90,11 @@ export class AvailabilitySession {
   async get(request: AvailabilityRequest): Promise<InventoryCheck> {
     return timeSearchAsync('availability_check',()=>this.getCheck(request));
   }
-  private async getCheck(request: AvailabilityRequest): Promise<InventoryCheck> {
+  private async getCheck(request: AvailabilityRequest,refreshNegative=false): Promise<InventoryCheck> {
     this.assertActive();
     this.counts.logicalAvailabilityChecks++;
     this.checkConfiguration();
-    const r={...request},key=requestKey(r),hit=this.peekKey(key),pending=this.pending.get(key);
+    const r={...request},key=requestKey(r),hit=refreshNegative?undefined:this.peekKey(key),pending=this.pending.get(key);
     if(hit||pending){
       this.counts.availabilityCacheHits++;
       const cached=hit??await pending!;

@@ -5,7 +5,7 @@ import {AvailabilityFreshnessPolicy} from '../observations/freshness.js';
 import {availabilityStateConfig} from '../../config/availability-state.js';
 import {configuredRedisAvailabilityCache} from '../observations/redis-client.js';
 import {attachObservation,observationEnvelope,type ObservationMetadata} from '../observations/model.js';
-import {providerIdentityObserved,type ProviderIdentityEvidence} from '../availability-evidence.js';
+import {providerIdentityObserved,negativeAvailabilityRefreshAge,type ProviderIdentityEvidence} from '../availability-evidence.js';
 import {availabilityRequestKey} from '../../utils/availability-key.js';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {hardeningConfig,type HardeningConfig} from '../../config/hardening.js';
@@ -20,13 +20,18 @@ import type {AvailabilityRequest} from '../../domain/types/availability.js';
 type CacheKind='INVENTORY'|'UNSUPPORTED_CLASS';
 type CachedEvidence={expires:number;value:unknown;observation?:ObservationMetadata};
 type Waiter={endQueue:()=>void;signal?:AbortSignal;run:ReturnType<typeof AsyncLocalStorage.snapshot>;resolve:(v:unknown)=>void;reject:(e:unknown)=>void;cleanup:()=>void;queuedAt:number;waited:boolean};
-type Entry={observation?:ObservationMetadata;reusedObservation?:boolean;observedAt?:number;identityEvidence?:ProviderIdentityEvidence;timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
+type Entry={refreshMinimumAge?:number;observation?:ObservationMetadata;reusedObservation?:boolean;observedAt?:number;identityEvidence?:ProviderIdentityEvidence;timeoutMs:number;httpStatus?:number;transportFailure?:ProviderFailureCategory;key:string;request:AvailabilityRequest;owner:unknown;invoke:()=>Promise<unknown>;waiters:Set<Waiter>;controller:AbortController;running:boolean;timer?:ReturnType<typeof setTimeout>};
 /** One default instance covers every raw/normalized availability SDK entry point.
  * Queue owners rotate after each start. Running calls are never preempted.
  * Aborted/time-out SDKs retain their slots until the SDK promise actually settles:
  * an SDK ignoring abort must not let physical concurrency exceed the hard cap.
  */
 export class AvailabilityScheduler {
+ private refreshableNegative(request:AvailabilityRequest,value:unknown,observedAt:number|undefined,minimumAge:number|undefined):boolean{
+  if(minimumAge===undefined||observedAt===undefined||this.now()-observedAt<minimumAge)return false;
+  const result=normalizeAvailability(value,request),days=result.days.filter(d=>d.date===request.journeyDate);
+  return result.providerState==='SUCCESS'&&days.length===1&&['WAITLIST','NOT_AVAILABLE'].includes(days[0].state);
+ }
  readonly quota:ProviderQuota;
  private active=0;
  private pending=new Map<string,Entry>();
@@ -50,10 +55,11 @@ export class AvailabilityScheduler {
  }
  execute(request:AvailabilityRequest,invoke:()=>Promise<unknown>):Promise<unknown>{
   const signal=availabilitySignal();signal?.throwIfAborted();
-  const key=availabilityRequestKey(request);
+  const key=availabilityRequestKey(request),refreshMinimumAge=negativeAvailabilityRefreshAge(request);
   for(const kind of ['INVENTORY','UNSUPPORTED_CLASS'] as const){
    const cache=this.caches[kind],cached=cache.get(key);
    if(cached&&cached.expires>this.now()&&(!cached.observation||cached.observation.observedAt<=this.now())){
+    if(kind==='INVENTORY'&&this.refreshableNegative(request,cached.value,cached.observation?.observedAt,refreshMinimumAge))continue;
     availabilityMetric(kind==='INVENTORY'?'sharedCacheHits':'unsupportedEvidenceCacheHits');
     if(kind==='INVENTORY')availabilityMetric('hotCacheHits');
     return Promise.resolve(attachObservation(structuredClone(cached.value),cached.observation));
@@ -63,7 +69,7 @@ export class AvailabilityScheduler {
   let entry=this.pending.get(key);
   if(entry)availabilityMetric('sharedInflightHits');
   else{
-   entry={timeoutMs:availabilityTimeoutMs()??this.config.providerTimeoutMs,key,request:{...request},owner:signal??Symbol(),invoke,waiters:new Set(),controller:new AbortController(),running:false};
+   entry={refreshMinimumAge,timeoutMs:availabilityTimeoutMs()??this.config.providerTimeoutMs,key,request:{...request},owner:signal??Symbol(),invoke,waiters:new Set(),controller:new AbortController(),running:false};
    this.pending.set(key,entry);this.queue.push(entry);
   }
   const work=entry;
@@ -114,7 +120,7 @@ export class AvailabilityScheduler {
     if(this.observations){
      const lookup=await this.observations.lookup(entry.request,this.now,entry.controller.signal);
      entry.controller.signal.throwIfAborted();
-     if(lookup.state==='FRESH'){
+     if(lookup.state==='FRESH'&&!this.refreshableNegative(entry.request,observationEnvelope(lookup.observation.result),lookup.observation.observedAt,entry.refreshMinimumAge)){
       entry.reusedObservation=true;entry.observation={observedAt:lookup.observation.observedAt,freshUntil:lookup.freshUntil};
       return observationEnvelope(lookup.observation.result);
      }

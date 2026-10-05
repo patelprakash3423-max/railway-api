@@ -33,6 +33,35 @@ function setup(t:TestContext,options:{store?:(real:SqliteAvailabilityObservation
 }
 function failing(real:SqliteAvailabilityObservationStore,read=false,write=false):AvailabilityObservationStore{return {getLatest:r=>{if(read)throw Error('secret path read failed');return real.getLatest(r);},upsertLatest:o=>{if(write)throw Error('secret write failure');real.upsertLatest(o);},cleanup:t=>real.cleanup(t),close:()=>{}};}
 
+test('selected exact negative refresh bypasses persisted and hot WAITLIST once and updates latest evidence',async t=>{
+ const h=setup(t);h.seed('WAITLIST',start-120000);const provider=h.create();await provider.getAvailability(request);const s=h.session(3,provider);
+ assert.equal((await s.getCached(request))!.status,'WAITLIST');assert.equal(h.calls(),0);
+ assert.equal((await s.refreshNegative(request,60000))!.status,'AVAILABLE');assert.equal(h.calls(),1);
+ assert.equal(h.real.getLatest(request)!.result.days[0].state,'AVAILABLE');
+ assert.equal((await s.refreshNegative(request,60000))!.status,'AVAILABLE');assert.equal(h.calls(),1);
+ assert.equal((await h.session().get(request)).status,'AVAILABLE');assert.equal(h.calls(),1);
+});
+test('newly refreshed WAITLIST stays cached across sessions until minimum age and never refreshes twice in one session',async t=>{
+ const h=setup(t,{reply:async()=>new Response(JSON.stringify(raw('WAITLIST')))});h.seed('WAITLIST',start-120000);const s=h.session();
+ await s.getCached(request);await s.refreshNegative(request,60000);assert.equal(h.calls(),1);
+ const next=h.session();await next.getCached(request);await next.refreshNegative(request,60000);assert.equal(h.calls(),1);
+ h.advance(59999);await next.refreshNegative(request,60000);assert.equal(h.calls(),1);
+ h.advance(1);await next.refreshNegative(request,60000);assert.equal(h.calls(),2);
+ h.advance(60000);await next.refreshNegative(request,60000);assert.equal(h.calls(),2);
+});
+for(const state of ['AVAILABLE','RAC'])test('negative refresh leaves fresh '+state+' reuse unchanged',async t=>{
+ const h=setup(t);h.seed(state,start-120000);const s=h.session();await s.getCached(request);
+ assert.equal((await s.refreshNegative(request,60000))!.status,state);assert.equal(h.calls(),0);
+});
+test('negative refresh shares provider budget across legs and stops at the existing ceiling',async t=>{
+ const h=setup(t);h.seed('WAITLIST',start-120000);const s=h.session(1);
+ await s.getCached(request);await s.refreshNegative(request,60000);
+ const second={...request,toStationCode:'CCC'};h.real.upsertLatest(makeObservation(normalizeAvailability({...raw('WAITLIST'),data:{availability:[{date,status:'WAITLIST'}]}},second),start-120000));
+ await s.getCached(second);const denied=await s.refreshNegative(second,60000);
+ assert.equal(denied!.errorCategory,'PROVIDER_BUDGET_EXHAUSTED');assert.equal(h.calls(),1);assert.equal(s.statistics().providerAvailabilityCalls,1);
+ assert.equal(Array.from({length:10},()=>s.claimSelectedFallback()).filter(Boolean).length,8);
+});
+
 test('persistent FRESH hit returns normalized AVAILABLE 20 with zero provider cost',async t=>{
  const h=setup(t);h.seed();const s=h.session(),check=await s.get(request),d=s.statistics();
  assert.equal(check.status,'AVAILABLE');assert.equal(check.rawDetails!.days[0].availableCount,20);assert.equal(h.calls(),0);

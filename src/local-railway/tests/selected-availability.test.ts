@@ -141,7 +141,7 @@ test('selected diagnostics distinguish quota rejection, exhaustion, and cold per
  const quota=fixture(t),q=(await quota.check(quota.create(2))).diagnostics!.selectedRoute!;
  assert.equal(q.finalSearchStopReason,'GLOBAL_PROVIDER_LIMIT_REACHED');assert.equal(q.globalProviderQuotaBlocked,true);assert.ok(q.budgetRemaining>0);
  const exhausted=fixture(t,undefined,['SV','NDLS']),e=(await exhausted.check()).diagnostics!.selectedRoute!;
- assert.equal(e.finalSearchStopReason,'NO_USEFUL_PROBES_REMAINING');assert.ok(e.budgetRemaining>0);
+ assert.equal(e.finalSearchStopReason,'SEARCH_EXHAUSTED');assert.ok(e.budgetRemaining>0);assert.ok(e.negativeRefreshTooRecent>0);
  const cached=fixture(t,()=> 'AVAILABLE');await cached.check();const c=(await cached.check(cached.create())).diagnostics!.selectedRoute!;
  assert.equal(c.finalSearchStopReason,'FULL_COVERAGE_FOUND');assert.equal(c.newProviderCallsUsed,0);assert.ok(c.persistedObservationHits>0);assert.ok(c.freshObservationHits>0);assert.deepEqual(c.uncoveredRanges,[]);
  assert.ok(c.trace.some(p=>p.source==='PERSISTED'&&p.status==='AVAILABLE'));
@@ -402,7 +402,7 @@ test('an adjacent bounded gap really exhausts after its one exact supported prob
  h.seed('SV','NDLS','3E','WAITLIST');h.seed('SV','GD','3E');h.seed('TDL','NDLS','3E');
  const d=(await h.check()).diagnostics!.selectedRoute!;
  assert.equal(d.boundedGapCandidatesExecuted,1);assert.equal(d.boundedGapPriorityProbes,1);
- assert.equal(d.boundedGapReseedCount,0);assert.equal(d.finalSearchStopReason,'NO_USEFUL_PROBES_REMAINING');
+ assert.equal(d.boundedGapReseedCount,0);assert.equal(d.finalSearchStopReason,'SEARCH_EXHAUSTED');assert.ok(d.negativeRefreshTooRecent>0);
  assert.ok(d.budgetRemaining>0);
 });
 
@@ -600,4 +600,64 @@ test('one exact reservation never starts ticket consolidation',async()=>{
   cached:async()=>{lookups++;return undefined;},check:async()=>{calls++;throw Error('No probe needed');},
   solve:()=>({full:1,partial:0,reserved:300,gaps:[],reservationParts:[{a:0,b:3,c:'3A'}]})});
  assert.equal(calls,0);assert.equal(lookups,0);
+});
+
+test('exhausted cached negative scope refreshes an omitted complementary split into two same-class tickets',async t=>{
+ const codes=['A','S1','S2','S3','S4','S5','S6','B'];
+ const h=fixture(t,r=>r.toStationCode==='S2'||r.fromStationCode==='S2'?'AVAILABLE':'WAITLIST',codes,62,true);h.input.classes=['3A'];
+ for(let a=0;a<codes.length-1;a++)for(let b=a+1;b<codes.length;b++)h.seed(codes[a],codes[b],'3A','WAITLIST',now()-120000);
+ const r=await h.check(),parts=r.results[0].legs[0].segments.flatMap(s=>s.type==='RESERVED'?s.reservationParts??[]:[]);
+ assert.equal(r.results[0].reservedCoverageRatio,1);assert.equal(r.results[0].classChanges,0);
+ assert.deepEqual(parts.map(p=>[p.fromStation,p.toStation]),[['A','S2'],['S2','B']]);
+ assert.ok(h.calls.length>0&&h.calls.length<=8);assert.equal(new Set(h.calls.map(availabilityRequestKey)).size,h.calls.length);
+ assert.equal(r.diagnostics!.selectedRoute!.normalScopeExhaustions,1);assert.equal(r.diagnostics!.selectedRoute!.complementaryFallbackAttempts,1);
+ assert.ok(r.diagnostics!.selectedRoute!.negativeRefreshAttempts>=2);assert.equal(r.diagnostics!.selectedRoute!.fullCoverageAfterFallback,1);
+ assert.equal(r.diagnostics!.selectedRoute!.finalSearchStopReason,'FULL_COVERAGE_FOUND');
+ assert.equal(h.store.getLatest(h.calls.find(c=>c.toStationCode==='S2')!)!.result.days[0].state,'AVAILABLE');
+ const before=h.calls.length;await h.check(h.create());assert.equal(h.calls.length,before);
+});
+test('recent persisted negatives defer refresh honestly without spending provider budget',async t=>{
+ const codes=['A','S1','S2','S3','S4','S5','S6','B'],h=fixture(t,()=> 'WAITLIST',codes,62);h.input.classes=['3A'];
+ for(let a=0;a<codes.length-1;a++)for(let b=a+1;b<codes.length;b++)h.seed(codes[a],codes[b],'3A','WAITLIST');
+ const r=await h.check();assert.equal(h.calls.length,0);assert.equal(r.results[0].reservedCoverageRatio,0);
+ assert.equal(r.diagnostics!.selectedRoute!.complementaryFallbackAttempts,1);assert.ok(r.diagnostics!.selectedRoute!.negativeRefreshTooRecent>0);
+ assert.equal(r.diagnostics!.selectedRoute!.negativeRefreshAttempts,0);assert.notEqual(r.diagnostics!.selectedRoute!.finalSearchStopReason,'NO_USEFUL_PROBES_REMAINING');
+});
+test('complementary endpoint fallback hydrates omitted AVAILABLE tickets without refreshing them',async()=>{
+ const known=new Map<string,import('../../journey/availability/types.js').InventoryCheck>();let live=0;
+ const key=(e:{a:number;b:number;c:string})=>`${e.a}:${e.b}:${e.c}`;
+ const d=await searchSelectedEvidence({nodes:8,classes:['3A'],providerAllowance:62,logicalAllowance:62,enough:false,
+  currentTimeMs:now,claimFallback:()=>true,providerUsed:()=>live,providerRemaining:()=>62-live,remainingTime:()=>10000,active:()=>{},known:e=>known.get(key(e)),
+  cached:async e=>{const hit={travelClass:e.c,status:(e.a===0&&e.b===2||e.a===2&&e.b===7?'AVAILABLE':'WAITLIST') as 'AVAILABLE'|'WAITLIST',evidence:{observedAt:now()} as import('../../providers/availability-evidence.js').AvailabilityEvidence};known.set(key(e),hit);return hit;},
+  check:async e=>known.get(key(e)),refreshNegative:async()=>{live++;throw Error('Positive/recent evidence must not refresh');},
+  solve:()=>({full:Number(known.get('0:2:3A')?.status==='AVAILABLE'&&known.get('2:7:3A')?.status==='AVAILABLE'),partial:0,reserved:0,gaps:[{a:0,b:7}]})});
+ assert.equal(d.fullPathsFound,1);assert.equal(live,0);
+});
+
+test('complementary fallback also discovers missing exact keys outside the initial split set',async t=>{
+ const codes=['A','S1','S2','S3','S4','S5','S6','B'],h=fixture(t,r=>r.toStationCode==='S2'||r.fromStationCode==='S2'?'AVAILABLE':'WAITLIST',codes,62);h.input.classes=['3A'];
+ for(let a=0;a<codes.length-1;a++)for(let b=a+1;b<codes.length;b++)if(!(codes[a]==='A'&&codes[b]==='S2'||codes[a]==='S2'&&codes[b]==='B'))h.seed(codes[a],codes[b],'3A','WAITLIST');
+ const r=await h.check();assert.equal(r.results[0].reservedCoverageRatio,1);
+ assert.deepEqual(h.calls.map(p=>[p.fromStationCode,p.toStationCode]),[['A','S2'],['S2','B']]);
+ assert.equal(r.diagnostics!.selectedRoute!.negativeRefreshAttempts,0);assert.equal(r.diagnostics!.selectedRoute!.fullCoverageAfterFallback,1);
+});
+
+test('selected fallback caps provider candidates and skips unsupported classes before class selection',async()=>{
+ let live=0,claims=0;const refreshed:string[]=[];
+ const d=await searchSelectedEvidence({nodes:12,classes:['SL','3A','2A'],providerAllowance:62,logicalAllowance:62,enough:false,
+  currentTimeMs:now,claimFallback:()=>++claims<=8,providerUsed:()=>live,providerRemaining:()=>62-live,remainingTime:()=>10000,active:()=>{},
+  unsupportedClass:c=>c==='SL',known:e=>({travelClass:e.c,status:'WAITLIST',evidence:{observedAt:now()-120000} as import('../../providers/availability-evidence.js').AvailabilityEvidence}),
+  check:async e=>({travelClass:e.c,status:'WAITLIST'}),
+  refreshNegative:async e=>{live++;refreshed.push(`${e.a}:${e.b}:${e.c}`);return {travelClass:e.c,status:'WAITLIST'};},
+  solve:()=>({full:0,partial:0,reserved:0,gaps:[{a:0,b:11}]})});
+ assert.equal(live,8);assert.equal(new Set(refreshed).size,8);assert.ok(refreshed.every(k=>!k.endsWith(':SL')));assert.equal(d.stopReason,'BOUNDED_FALLBACK_COMPLETE');
+});
+for(const boundary of ['budget','deadline','busy'] as const)test(`selected fallback preserves ${boundary} boundary`,async()=>{
+ let refreshes=0,claims=0;
+ await searchSelectedEvidence({nodes:4,classes:['3A'],providerAllowance:62,logicalAllowance:62,enough:false,
+  currentTimeMs:now,claimFallback:()=>{claims++;return true;},providerUsed:()=>boundary==='busy'?5:0,providerRemaining:()=>boundary==='budget'?0:62,remainingTime:()=>boundary==='deadline'?0:10000,active:()=>{},
+  known:e=>({travelClass:e.c,status:'WAITLIST',evidence:{observedAt:now()-120000} as import('../../providers/availability-evidence.js').AvailabilityEvidence}),
+  check:async e=>({travelClass:e.c,status:'WAITLIST'}),refreshNegative:async()=>{refreshes++;throw Error('Boundary must win');},
+  solve:()=>({full:0,partial:0,reserved:0,gaps:[{a:0,b:3}]})});
+ assert.equal(refreshes,0);assert.equal(claims,0);
 });

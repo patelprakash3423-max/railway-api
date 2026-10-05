@@ -1,4 +1,5 @@
-import {selectedSearchStopped,selectedBoundedBreadth} from '../selected-diagnostics.js';
+import {selectedSearchStopped,selectedBoundedBreadth,selectedFallbackEvent} from '../selected-diagnostics.js';
+import {selectedFallbackPolicy} from './evidence-search.js';
 import type {BoundedGapRejection,BoundedProbeProgress,EvidenceEdge,EvidenceGap,EvidenceSearchContext,EvidenceSearchDiagnostics,EvidenceStopReason} from './evidence-search.js';
 
 /** A deterministic refinement tree, reconstructed from fresh observations on a
@@ -268,6 +269,64 @@ export async function searchSelectedEvidence(ctx:EvidenceSearchContext):Promise<
   }
  }
  quality=ctx.solve();
+ // Only selected recovery's exhausted normal scope enters this request-bounded
+ // endpoint sweep. Negative evidence stays reusable everywhere else.
+ if(!reason&&!quality.full)selectedFallbackEvent('normalScopeExhaustions');
+ if(!reason&&!quality.full&&ctx.claimFallback&&ctx.refreshNegative&&ctx.providerRemaining()>0&&ctx.providerUsed()<=selectedFallbackPolicy.maxInitialLiveCalls){
+  selectedFallbackEvent('complementaryFallbackAttempts');
+  const initialSplits=new Set(splitPoints(0,last)),seen=new Set<string>(),initialReserved=quality.reserved;let candidates=0;
+  const usable=(e:EvidenceEdge)=>['AVAILABLE','RAC'].includes(ctx.known(e)?.status??'');
+  const stopPositive=(k:number)=>ctx.classes.some(c=>usable({a:0,b:k,c})||usable({a:k,b:last,c}));
+  const preferred=ctx.preferredNodes??Array.from({length:last-1},(_,i)=>i+1);
+  const stops=[...new Set(preferred)].filter(k=>k>0&&k<last).sort((a,b)=>Number(stopPositive(b))-Number(stopPositive(a))||Number(initialSplits.has(a))-Number(initialSplits.has(b))||preferred.indexOf(a)-preferred.indexOf(b)).slice(0,selectedFallbackPolicy.maxStops);
+  const probe=async(edge:EvidenceEdge)=>{
+   const id=edgeKey(edge);if(seen.has(id))return true;seen.add(id);
+   ctx.active();if(ctx.remainingTime()<=0){reason='DEADLINE';return false;}
+   const cached=await ctx.cached?.(edge)??ctx.known(edge);
+   if(cached?.status==='AVAILABLE'||cached?.status==='RAC'){remember(edge,cached);valid.add(id);updateQuality(ctx.solve());return !quality.full;}
+   if(unsupported.has(edge.c)||ctx.unsupportedClass?.(edge.c)){ctx.diagnosticProbe?.(edge,'UNSUPPORTED_TRAIN_CLASS');return true;}
+   if(cached&&!['WAITLIST','UNAVAILABLE'].includes(cached.status))return true;
+   // A reserved island already drives the existing bounded-gap frontier. Do
+   // not introduce unrelated endpoint misses across those covered boundaries.
+   if(!cached&&initialReserved>0)return true;
+   if(cached){
+    const observedAt=cached.rawDetails?.observation?.observedAt??cached.evidence?.observedAt;
+    if(observedAt===undefined||(ctx.currentTimeMs?.()??Date.now())-observedAt<selectedFallbackPolicy.minimumNegativeAgeMs){
+     selectedFallbackEvent('negativeRefreshTooRecent');ctx.diagnosticProbe?.(edge,'NEGATIVE_REFRESH_TOO_RECENT');return true;
+    }
+   }
+   if(ctx.providerRemaining()<=0){reason='PROVIDER_BUDGET_EXHAUSTED';return false;}
+   if(checks>=ctx.logicalAllowance){reason='LOGICAL_SAFETY_LIMIT';return false;}
+   if(ctx.providerUsed()-started>=ctx.providerAllowance){reason='FAIRNESS_RESERVE';return false;}
+   if(candidates>=selectedFallbackPolicy.maxProviderCandidates||!ctx.claimFallback!())return false;
+   candidates++;selectedFallbackEvent('fallbackProviderCandidates');
+   if(cached)selectedFallbackEvent('negativeRefreshAttempts');
+   ctx.diagnosticProbe?.(edge,cached?'NEGATIVE_REFRESH':'COMPLEMENTARY_ENDPOINT_PROBE',true);
+   const check=cached?await ctx.refreshNegative!(edge,selectedFallbackPolicy.minimumNegativeAgeMs):await ctx.check(edge);checks++;
+   if(!check){reason=ctx.providerRemaining()<=0?'PROVIDER_BUDGET_EXHAUSTED':'LOGICAL_SAFETY_LIMIT';return false;}
+   remember(edge,check);stations.add(edge.a);stations.add(edge.b);classes.add(edge.c);
+   if(['AVAILABLE','RAC','WAITLIST','UNAVAILABLE'].includes(check.status))valid.add(id);
+   if(check.errorCategory==='PROVIDER_BUDGET_EXHAUSTED'){reason='PROVIDER_BUDGET_EXHAUSTED';return false;}
+   if(check.errorCategory==='RATE_LIMITED'){reason='PROVIDER_RATE_LIMIT';return false;}
+   if(check.status==='PROVIDER_ERROR'){reason='PROVIDER_UNAVAILABLE';return false;}
+   if(check.status==='AVAILABLE'||check.status==='RAC')updateQuality(ctx.solve());
+   return !quality.full;
+  };
+  let continuing=true;
+  for(const k of stops){
+   const classes=ctx.classes.filter(c=>!unsupported.has(c)&&!ctx.unsupportedClass?.(c)).sort((a,b)=>Number(usable({a:0,b:k,c:b})||usable({a:k,b:last,c:b}))-Number(usable({a:0,b:k,c:a})||usable({a:k,b:last,c:a}))).slice(0,selectedFallbackPolicy.maxClassesPerStop);
+   for(const c of classes){
+    if(!await probe({a:0,b:k,c})||!await probe({a:k,b:last,c})){continuing=false;break;}
+   }
+   if(!continuing)break;
+  }
+  // With no internal stop (or only recent split evidence), the whole-leg
+  // negative is still a strategic exact candidate, under the same shared cap.
+  if(continuing&&!quality.full)for(const c of ctx.classes.filter(c=>!unsupported.has(c)&&!ctx.unsupportedClass?.(c)).slice(0,selectedFallbackPolicy.maxClassesPerStop))if(!await probe({a:0,b:last,c}))break;
+  quality=ctx.solve();
+  if(quality.full){reason='SUFFICIENT_HIGH_QUALITY_RESULTS';selectedFallbackEvent('fullCoverageAfterFallback');}
+  else reason??='BOUNDED_FALLBACK_COMPLETE';
+ }
  // Full coverage ends general exploration. Only exact unions of consecutive
  // same-class tickets may bypass ALREADY_COVERED here; never infer through seats.
  // Eight candidates total bounds cache work as well as new provider attempts.

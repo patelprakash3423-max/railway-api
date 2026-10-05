@@ -4,12 +4,13 @@ import type {InventoryCheck} from '../types.js';
 import {recoveryClassPreference} from './paths.js';
 
 export type EvidenceSearchMode='EXACT_MATRIX'|'ADAPTIVE_GRAPH';
-export type EvidenceStopReason='EXACT_MATRIX_COMPLETE'|'SUFFICIENT_HIGH_QUALITY_RESULTS'|'MARGINAL_VALUE_LOW'|'PROVIDER_BUDGET_EXHAUSTED'|'LOGICAL_SAFETY_LIMIT'|'DEADLINE'|'PROVIDER_RATE_LIMIT'|'PROVIDER_UNAVAILABLE'|'FAIRNESS_RESERVE'|'SCOPE_EXHAUSTED';
+export type EvidenceStopReason='EXACT_MATRIX_COMPLETE'|'SUFFICIENT_HIGH_QUALITY_RESULTS'|'MARGINAL_VALUE_LOW'|'PROVIDER_BUDGET_EXHAUSTED'|'LOGICAL_SAFETY_LIMIT'|'DEADLINE'|'PROVIDER_RATE_LIMIT'|'PROVIDER_UNAVAILABLE'|'FAIRNESS_RESERVE'|'SCOPE_EXHAUSTED'|'BOUNDED_FALLBACK_COMPLETE';
 export interface EvidenceSearchDiagnostics {
  searchMode:EvidenceSearchMode;possibleMatrixEdges:number;checkedMatrixEdges:number;matrixCoverage:number;
  stationsExplored:number;classesExplored:number;fullPathsFound:number;partialPathsFound:number;stopReason:EvidenceStopReason;
 }
 export const evidenceSearchPolicy=Object.freeze({batchSize:8,frontierSize:512,estimatedAttemptMs:150});
+export const selectedFallbackPolicy=Object.freeze({minimumNegativeAgeMs:60000,maxInitialLiveCalls:4,maxStops:4,maxClassesPerStop:2,maxProviderCandidates:8});
 export interface EvidenceEdge {a:number;b:number;c:TravelClass}
 export interface EvidenceGap {a:number;b:number}
 export type BoundedGapRejection='DUPLICATE'|'EXACT_EVIDENCE_ALREADY_EXISTS'|'UNSUPPORTED_CLASS'|'OUTSIDE_GAP'|'INVALID_STATION_ORDER';
@@ -25,6 +26,9 @@ export interface CandidateRevisitDiagnostics {
  turns:{round:number;trainNumber:string;providerCalls:number;logicalChecks:number;stopReason:EvidenceStopReason}[];
 }
 export interface EvidenceSearchContext {
+ currentTimeMs?:()=>number;
+ claimFallback?:()=>boolean;
+ refreshNegative?:(edge:EvidenceEdge,minimumAgeMs:number)=>Promise<InventoryCheck|undefined>;
  diagnosticProbe?:(edge:EvidenceEdge,reason:string,expansion?:boolean)=>void;
  diagnosticPriority?:(edge:EvidenceEdge,positiveClassEvidence:boolean)=>void;
  diagnosticFrontier?:(before:number,after:number)=>void;

@@ -131,6 +131,13 @@ export async function recoverSingleTrainLeg(database:RailwayDatabase,session:Ava
       unsupportedClass:c=>session.unsupported.get(trainNumber)?.has(c)===true,
       nodeDistances:nodes.map(n=>n.distanceKm!),
       defer:resume=>{evidenceResume=resume;},
+      currentTimeMs:()=>session.currentTimeMs,
+      claimFallback:()=>session.claimSelectedFallback(),
+      refreshNegative:async(e,minimumAgeMs)=>{
+        const v=add(e.a,e.b)!,r=request(v,e.c),check=await session.refreshNegative(r,minimumAgeMs);
+        if(check){v.checks.set(e.c,check);checks.push({fromStation:r.fromStationCode,toStation:r.toStationCode,boardingDate:r.journeyDate,check});}
+        return check;
+      },
       providerUsed:()=>session.providerBudget.statistics().providerAvailabilityCalls,providerRemaining:()=>session.providerBudget.statistics().providerCallBudgetRemaining,
       remainingTime:()=>session.remainingTimeMs(),active:()=>session.assertActive(),
       cached:async e=>{

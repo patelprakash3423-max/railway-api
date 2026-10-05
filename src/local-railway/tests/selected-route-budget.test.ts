@@ -37,8 +37,8 @@ test('explicit 40 override remains enforced and stricter global ceiling wins',as
  assert.equal(d.calculatedDynamicBudget,200);assert.equal(d.explicitBudgetOverride,40);assert.equal(h.calls.length,40);assert.equal(d.finalSearchStopReason,'SELECTED_ROUTE_BUDGET_EXHAUSTED');
  const g=fixture(t,30,false,{providerCallBudgetLimit:3});const gd=(await g.check()).diagnostics!.selectedRoute!;assert.equal(g.calls.length,3);assert.equal(gd.finalSearchStopReason,'GLOBAL_PROVIDER_LIMIT_REACHED');
 });
-test('exhausted useful scope stops without spending remaining dynamic budget',async t=>{
- const h=fixture(t,2,false);const d=(await h.check()).diagnostics!.selectedRoute!;assert.equal(h.calls.length,1);assert.equal(d.effectiveProviderCallLimit,60);assert.equal(d.budgetRemaining,59);assert.equal(d.finalSearchStopReason,'NO_USEFUL_PROBES_REMAINING');
+test('exhausted scope with unaged negative evidence stops without spending remaining dynamic budget',async t=>{
+ const h=fixture(t,2,false);const d=(await h.check()).diagnostics!.selectedRoute!;assert.equal(h.calls.length,1);assert.equal(d.effectiveProviderCallLimit,60);assert.equal(d.budgetRemaining,59);assert.equal(d.finalSearchStopReason,'SEARCH_EXHAUSTED');assert.equal(d.negativeRefreshAttempts,0);
 });
 test('cache-only evidence costs zero new calls under dynamic policy',async t=>{
  const h=fixture(t);const request={trainNumber:'15565',fromStationCode:'S0',toStationCode:'S9',journeyDate:date,travelClass:'SL',quota:'GN' as const};

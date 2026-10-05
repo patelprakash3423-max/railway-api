@@ -1,7 +1,16 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
+import {availabilityRequestKey} from '../utils/availability-key.js';
 import {safeProviderErrorDetails,type ProviderErrorDetails} from '../domain/types/provider-error-details.js';
 import type {AvailabilityRequest,AvailabilityResult} from '../domain/types/availability.js';
 import {providerFailureCategories,type ProviderFailureCategory} from '../domain/types/provider-failure.js';
+// Internal invocation scope, never a public request option or a global cache rule.
+const negativeRefresh=new AsyncLocalStorage<{key:string;minimumAgeMs:number}>();
+export function withNegativeAvailabilityRefresh<T>(request:AvailabilityRequest,minimumAgeMs:number,work:()=>Promise<T>):Promise<T>{
+ return negativeRefresh.run({key:availabilityRequestKey(request),minimumAgeMs},work);
+}
+export function negativeAvailabilityRefreshAge(request:AvailabilityRequest):number|undefined{
+ const scope=negativeRefresh.getStore();return scope?.key===availabilityRequestKey(request)?scope.minimumAgeMs:undefined;
+}
 export const identityPresenceFields=['providerTrainIdentityPresent','providerFromIdentityPresent','providerToIdentityPresent','providerClassIdentityPresent','providerQuotaIdentityPresent','providerJourneyDateIdentityPresent'] as const;
 export type ProviderIdentityEvidence=Record<typeof identityPresenceFields[number],boolean>&{
  providerIdentityValidation:'VALIDATED'|'REJECTED'|'NOT_PROVIDED'|'NOT_EVALUATED';
