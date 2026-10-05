@@ -643,19 +643,39 @@ test('complementary fallback also discovers missing exact keys outside the initi
 });
 
 test('selected fallback caps provider candidates and skips unsupported classes before class selection',async()=>{
- let live=0,claims=0;const refreshed:string[]=[];
+ let live=24,claims=0;const refreshed:string[]=[];
  const d=await searchSelectedEvidence({nodes:12,classes:['SL','3A','2A'],providerAllowance:62,logicalAllowance:62,enough:false,
   currentTimeMs:now,claimFallback:()=>++claims<=8,providerUsed:()=>live,providerRemaining:()=>62-live,remainingTime:()=>10000,active:()=>{},
   unsupportedClass:c=>c==='SL',known:e=>({travelClass:e.c,status:'WAITLIST',evidence:{observedAt:now()-120000} as import('../../providers/availability-evidence.js').AvailabilityEvidence}),
   check:async e=>({travelClass:e.c,status:'WAITLIST'}),
   refreshNegative:async e=>{live++;refreshed.push(`${e.a}:${e.b}:${e.c}`);return {travelClass:e.c,status:'WAITLIST'};},
   solve:()=>({full:0,partial:0,reserved:0,gaps:[{a:0,b:11}]})});
- assert.equal(live,8);assert.equal(new Set(refreshed).size,8);assert.ok(refreshed.every(k=>!k.endsWith(':SL')));assert.equal(d.stopReason,'BOUNDED_FALLBACK_COMPLETE');
+ assert.equal(live,32);assert.equal(new Set(refreshed).size,8);assert.ok(refreshed.every(k=>!k.endsWith(':SL')));assert.equal(d.stopReason,'BOUNDED_FALLBACK_COMPLETE');
 });
-for(const boundary of ['budget','deadline','busy'] as const)test(`selected fallback preserves ${boundary} boundary`,async()=>{
+for(const providerErrors of [false,true])test(`normal scope spends more than four calls before two-ticket fallback (provider errors=${providerErrors})`,async t=>{
+ const codes=['A','S1','S2','S3','S4','S5','S6','B'];
+ const h=fixture(t,r=>r.fromStationCode==='A'&&r.toStationCode==='S2'||r.fromStationCode==='S2'&&r.toStationCode==='B'?'AVAILABLE':providerErrors?'UNKNOWN':'WAITLIST',codes,62);h.input.classes=['3A'];
+ const r=await h.check(),d=r.diagnostics!.selectedRoute!,parts=r.results[0].legs[0].segments.flatMap(s=>s.type==='RESERVED'?s.reservationParts??[]:[]);
+ const firstFallback=h.calls.findIndex(p=>p.fromStationCode==='A'&&p.toStationCode==='S2');
+ assert.ok(firstFallback>4,JSON.stringify(h.calls));assert.ok(d.newProviderCallsUsed-d.fallbackProviderCandidates>4);
+ assert.equal(d.normalScopeExhaustions,1);assert.equal(d.complementaryFallbackAttempts,1);assert.ok(d.fallbackProviderCandidates<=8);
+ assert.equal(r.results[0].reservedCoverageRatio,1);assert.equal(r.results[0].classChanges,0);
+ assert.deepEqual(parts.map(p=>[p.fromStation,p.toStation]),[['A','S2'],['S2','B']]);assert.equal(d.fullCoverageAfterFallback,1);
+});
+test('fallback prefers supported history over errors and excludes exact section restrictions',async()=>{
+ const known=new Map<string,import('../../journey/availability/types.js').InventoryCheck>();let live=24,claims=0;const calls:string[]=[];
+ const key=(e:{a:number;b:number;c:string})=>`${e.a}:${e.b}:${e.c}`;
+ const get=(e:import('../../journey/availability/recovery/evidence-search.js').EvidenceEdge)=>known.get(key(e))??{travelClass:e.c,status:(e.c==='EC'?'SECTION_NOT_BOOKABLE':e.c==='CC'?'PROVIDER_ERROR':'WAITLIST') as import('../../journey/availability/types.js').InventoryStatus,evidence:{observedAt:now()-120000} as import('../../providers/availability-evidence.js').AvailabilityEvidence};
+ const d=await searchSelectedEvidence({nodes:8,classes:['CC','EC','3A','SL'],providerAllowance:62,logicalAllowance:62,enough:false,
+  currentTimeMs:now,claimFallback:()=>++claims<=8,providerUsed:()=>live,providerRemaining:()=>62-live,remainingTime:()=>10000,active:()=>{},known:get,
+  check:async e=>get(e),refreshNegative:async e=>{live++;calls.push(key(e));const hit={travelClass:e.c,status:(e.a===0&&e.b===2||e.a===2&&e.b===7?'AVAILABLE':'WAITLIST') as 'AVAILABLE'|'WAITLIST'};known.set(key(e),hit);return hit;},
+  solve:()=>({full:Number(known.get('0:2:3A')?.status==='AVAILABLE'&&known.get('2:7:3A')?.status==='AVAILABLE'),partial:0,reserved:0,gaps:[{a:0,b:7}]})});
+ assert.equal(d.fullPathsFound,1);assert.ok(calls.every(c=>c.endsWith(':3A')||c.endsWith(':SL')));assert.ok(calls.length<=8);
+});
+for(const boundary of ['budget','deadline'] as const)test(`selected fallback preserves ${boundary} boundary`,async()=>{
  let refreshes=0,claims=0;
  await searchSelectedEvidence({nodes:4,classes:['3A'],providerAllowance:62,logicalAllowance:62,enough:false,
-  currentTimeMs:now,claimFallback:()=>{claims++;return true;},providerUsed:()=>boundary==='busy'?5:0,providerRemaining:()=>boundary==='budget'?0:62,remainingTime:()=>boundary==='deadline'?0:10000,active:()=>{},
+  currentTimeMs:now,claimFallback:()=>{claims++;return true;},providerUsed:()=>0,providerRemaining:()=>boundary==='budget'?0:62,remainingTime:()=>boundary==='deadline'?0:10000,active:()=>{},
   known:e=>({travelClass:e.c,status:'WAITLIST',evidence:{observedAt:now()-120000} as import('../../providers/availability-evidence.js').AvailabilityEvidence}),
   check:async e=>({travelClass:e.c,status:'WAITLIST'}),refreshNegative:async()=>{refreshes++;throw Error('Boundary must win');},
   solve:()=>({full:0,partial:0,reserved:0,gaps:[{a:0,b:3}]})});

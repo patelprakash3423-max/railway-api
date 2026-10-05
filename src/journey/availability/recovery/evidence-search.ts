@@ -10,7 +10,7 @@ export interface EvidenceSearchDiagnostics {
  stationsExplored:number;classesExplored:number;fullPathsFound:number;partialPathsFound:number;stopReason:EvidenceStopReason;
 }
 export const evidenceSearchPolicy=Object.freeze({batchSize:8,frontierSize:512,estimatedAttemptMs:150});
-export const selectedFallbackPolicy=Object.freeze({minimumNegativeAgeMs:60000,maxInitialLiveCalls:4,maxStops:4,maxClassesPerStop:2,maxProviderCandidates:8});
+export const selectedFallbackPolicy=Object.freeze({minimumNegativeAgeMs:60000,maxStops:4,maxClassesPerStop:2,maxProviderCandidates:8});
 export interface EvidenceEdge {a:number;b:number;c:TravelClass}
 export interface EvidenceGap {a:number;b:number}
 export type BoundedGapRejection='DUPLICATE'|'EXACT_EVIDENCE_ALREADY_EXISTS'|'UNSUPPORTED_CLASS'|'OUTSIDE_GAP'|'INVALID_STATION_ORDER';

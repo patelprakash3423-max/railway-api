@@ -272,10 +272,13 @@ export async function searchSelectedEvidence(ctx:EvidenceSearchContext):Promise<
  // Only selected recovery's exhausted normal scope enters this request-bounded
  // endpoint sweep. Negative evidence stays reusable everywhere else.
  if(!reason&&!quality.full)selectedFallbackEvent('normalScopeExhaustions');
- if(!reason&&!quality.full&&ctx.claimFallback&&ctx.refreshNegative&&ctx.providerRemaining()>0&&ctx.providerUsed()<=selectedFallbackPolicy.maxInitialLiveCalls){
+ if(!reason&&!quality.full&&ctx.claimFallback&&ctx.refreshNegative&&ctx.providerRemaining()>0){
   selectedFallbackEvent('complementaryFallbackAttempts');
   const initialSplits=new Set(splitPoints(0,last)),seen=new Set<string>(),initialReserved=quality.reserved;let candidates=0;
   const usable=(e:EvidenceEdge)=>['AVAILABLE','RAC'].includes(ctx.known(e)?.status??'');
+  const supportedHistory=(c:string)=>[...observed.values()].some(e=>e.c===c&&['AVAILABLE','RAC','WAITLIST','UNAVAILABLE'].includes(ctx.known(e)?.status??''));
+  const eligibleClass=(c:EvidenceEdge['c'],k?:number)=>!unsupported.has(c)&&!ctx.unsupportedClass?.(c)&&
+   !(k===undefined?[{a:0,b:last,c}]:[{a:0,b:k,c},{a:k,b:last,c}]).some(e=>ctx.known(e)?.status==='SECTION_NOT_BOOKABLE');
   const stopPositive=(k:number)=>ctx.classes.some(c=>usable({a:0,b:k,c})||usable({a:k,b:last,c}));
   const preferred=ctx.preferredNodes??Array.from({length:last-1},(_,i)=>i+1);
   const stops=[...new Set(preferred)].filter(k=>k>0&&k<last).sort((a,b)=>Number(stopPositive(b))-Number(stopPositive(a))||Number(initialSplits.has(a))-Number(initialSplits.has(b))||preferred.indexOf(a)-preferred.indexOf(b)).slice(0,selectedFallbackPolicy.maxStops);
@@ -314,7 +317,7 @@ export async function searchSelectedEvidence(ctx:EvidenceSearchContext):Promise<
   };
   let continuing=true;
   for(const k of stops){
-   const classes=ctx.classes.filter(c=>!unsupported.has(c)&&!ctx.unsupportedClass?.(c)).sort((a,b)=>Number(usable({a:0,b:k,c:b})||usable({a:k,b:last,c:b}))-Number(usable({a:0,b:k,c:a})||usable({a:k,b:last,c:a}))).slice(0,selectedFallbackPolicy.maxClassesPerStop);
+   const classes=ctx.classes.filter(c=>eligibleClass(c,k)).sort((a,b)=>Number(usable({a:0,b:k,c:b})||usable({a:k,b:last,c:b}))-Number(usable({a:0,b:k,c:a})||usable({a:k,b:last,c:a}))||Number(supportedHistory(b))-Number(supportedHistory(a))).slice(0,selectedFallbackPolicy.maxClassesPerStop);
    for(const c of classes){
     if(!await probe({a:0,b:k,c})||!await probe({a:k,b:last,c})){continuing=false;break;}
    }
@@ -322,7 +325,7 @@ export async function searchSelectedEvidence(ctx:EvidenceSearchContext):Promise<
   }
   // With no internal stop (or only recent split evidence), the whole-leg
   // negative is still a strategic exact candidate, under the same shared cap.
-  if(continuing&&!quality.full)for(const c of ctx.classes.filter(c=>!unsupported.has(c)&&!ctx.unsupportedClass?.(c)).slice(0,selectedFallbackPolicy.maxClassesPerStop))if(!await probe({a:0,b:last,c}))break;
+  if(continuing&&!quality.full)for(const c of ctx.classes.filter(c=>eligibleClass(c)).sort((a,b)=>Number(supportedHistory(b))-Number(supportedHistory(a))).slice(0,selectedFallbackPolicy.maxClassesPerStop))if(!await probe({a:0,b:last,c}))break;
   quality=ctx.solve();
   if(quality.full){reason='SUFFICIENT_HIGH_QUALITY_RESULTS';selectedFallbackEvent('fullCoverageAfterFallback');}
   else reason??='BOUNDED_FALLBACK_COMPLETE';
